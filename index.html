@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b1026">
+<title>Disney Day Planner</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1026'/%3E%3Cpath d='M32 10l5.5 14H52l-12 9 4.5 14.5L32 38.5 19.500 47.500 24 33 12 24h14.500z' fill='%23e3b95c'/%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%230b1026'/%3E%3Cpath d='M32 10l5.5 14H52l-12 9 4.5 14.5L32 38.5 19.500 47.500 24 33 12 24h14.500z' fill='%23e3b95c'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT@0,9..144,400..600,0..100;1,9..144,400..600,0..100&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="styles.css?v=1">
+</head>
+<body>
+<div id="setup" hidden></div>
+<div id="intro" hidden>
+  <div class="sky"></div>
+  <div class="stars" id="stars"></div>
+  <canvas id="fw"></canvas>
+  <div class="flash" id="flash"></div>
+  <div class="glow"></div>
+  <div class="castle" id="castle"></div>
+  <div class="ground"></div>
+  <div class="castle mirror" id="mirror"></div>
+  <div class="title" id="ititle"></div>
+  <div class="fam" id="ifam"></div>
+</div>
+<div class="wrap">
+  <header>
+    <p class="eyebrow" id="eyebrow">Disneyland Park</p>
+    <div class="row"><h1 id="heading">Your <em>day</em></h1><span class="clock"><b id="clock"></b><i id="sync">…</i></span></div>
+  </header>
+  <main id="view"></main>
+</div>
+<div id="mapwrap" hidden>
+  <div id="map"></div>
+  <div class="maptitle"><p class="eyebrow">Disneyland Park</p><h2>The route</h2></div>
+  <div class="mapui">
+    <button class="mbtn wide" onclick="A.mapFit()" aria-label="Show the whole park"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg><span>Whole park</span></button>
+    <button class="mbtn" id="locbtn" onclick="A.locate()" aria-label="Show my location"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg></button>
+    <div class="seg" role="group" aria-label="Map style"><button data-base="park" onclick="A.base('park')" aria-label="Park map" title="Park map"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14M15 6v14"/></svg></button><button data-base="street" onclick="A.base('street')" aria-label="Street map" title="Street map"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20 9 4M20 20 15 4M12 6v2M12 11v2M12 16v2"/></svg></button></div>
+  </div>
+  <div id="sheet" class="sheet"></div>
+</div>
+<nav class="tabs">
+  <button data-tab="now" onclick="A.tab('now')">Now</button>
+  <button data-tab="day" onclick="A.tab('day')">Day</button>
+  <button data-tab="map" onclick="A.tab('map')">Map</button>
+  <button data-tab="family" onclick="A.tab('family')">Family</button>
+  <button data-tab="settings" onclick="A.tab('settings')">Settings</button>
+</nav>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="config.js"></script>
+<script src="paths.js"></script>
+<script src="catalog.js"></script>
+<script src="planner.js"></script>
+<script src="setup.js"></script>
+<script src="intro.js"></script>
+<script src="main.js"></script>
+</body>
+</html>
