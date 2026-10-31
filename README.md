@@ -2,6 +2,8 @@
 
 A phone-sized web app that plans one day at Disneyland Park around your family.
 
+It's built for Disneyland Park in Anaheim, California. It doesn't cover Disney California Adventure, Walt Disney World, Disneyland Paris or the other Disney parks.
+
 You answer five short questions. It builds a minute-by-minute plan with walking times, nap breaks, meals, height limits, a rider switch for kids who are too short, and a map of the route. During the day it re-plans when you run late, skip a ride, or swap one for another.
 
 Fan-made, not affiliated with Disney. Disney, Disneyland and the ride and character names are trademarks of their owners and are used here only to describe the park.
