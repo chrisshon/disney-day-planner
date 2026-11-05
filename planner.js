@@ -159,7 +159,7 @@
 
     return {
       PROFILE: P, DAY: P.date, START: arrive, GROUP: (P.groupName || "").trim(), OCC,
-      IMG: {}, T, PEOPLE, ALL, ADULTS, KIDS, LANDS, WALK, PLAN, BONUS, LL_ORDER, DL, GEO: G, LAND_GEO,
+      IMG: {}, T, parkNow: K.parkNow, PEOPLE, ALL, ADULTS, KIDS, LANDS, WALK, PLAN, BONUS, LL_ORDER, DL, GEO: G, LAND_GEO,
       MULTI: !!P.multiPass,
       DEFAULT_PREFS: { departure: leave, napOn: !!P.nap.on, lean: "balanced", heights: {} },
     };

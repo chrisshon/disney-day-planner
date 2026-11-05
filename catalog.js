@@ -186,5 +186,19 @@ window.DDK = (function () {
   // Typical height in inches by age, used only when a child's height is not entered.
   const HEIGHT_BY_AGE = [24, 30, 34, 37, 40, 43, 46, 48, 51, 53, 55, 58, 60, 62, 64, 65, 66, 67];
 
-  return { T, LANDS, WALK, DL, att, ent, dine, CATALOG, GEO, LAND_GEO, HEIGHT_BY_AGE };
+  /* The date and minutes since midnight at the park (Anaheim), whatever timezone the phone is set to. */
+  const PARK_TZ = "America/Los_Angeles";
+  function parkNow(at) {
+    const d = at || new Date();
+    try {
+      const p = {}; new Intl.DateTimeFormat("en-US", { timeZone: PARK_TZ, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
+        .formatToParts(d).forEach(x => { p[x.type] = x.value; });
+      return { date: `${p.year}-${p.month}-${p.day}`, minutes: (+p.hour % 24) * 60 + +p.minute };
+    } catch (e) { // very old browsers without timezone support: fall back to the phone's own clock
+      const z = n => String(n).padStart(2, "0");
+      return { date: `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`, minutes: d.getHours() * 60 + d.getMinutes() };
+    }
+  }
+
+  return { T, parkNow, LANDS, WALK, DL, att, ent, dine, CATALOG, GEO, LAND_GEO, HEIGHT_BY_AGE };
 })();

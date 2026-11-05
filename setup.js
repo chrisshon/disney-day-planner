@@ -11,7 +11,7 @@ window.DDSetup = (function () {
   let S, step = 0, err = "", root, opts, napTouched = false;
 
   const timeOpts = (from, to, by, cur) => { let h = ""; for (let m = from; m <= to; m += by) h += `<option value="${m}" ${m === cur ? "selected" : ""}>${K.fmtT(m)}</option>`; return h; };
-  const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+  const todayStr = () => K.parkNow().date; // today at the park, not on the phone
   const heightOf = p => p.kid ? (p.inches || K.estimateInches(p.age)) : 66;
   const setPath = (path, val) => { const parts = path.split("."); let o = S; for (let i = 0; i < parts.length - 1; i++) o = o[parts[i]]; o[parts[parts.length - 1]] = val; };
 

@@ -43,9 +43,9 @@
   /* ---------- time ---------- */
   const pad = n => String(n).padStart(2, "0");
   const fmt = m => { if (m == null || !isFinite(m)) return "n/a"; let h = Math.floor(m / 60) % 24, mm = Math.round(m % 60); const ap = h >= 12 ? "pm" : "am"; h = h % 12 || 12; return `${h}:${pad(mm)} ${ap}`; };
-  const isTheDay = () => { const n = new Date(); return `${n.getFullYear()}-${pad(n.getMonth() + 1)}-${pad(n.getDate())}` === DAY; };
+  const isTheDay = () => D.parkNow().date === DAY; // park time (Anaheim), not the phone's timezone
   const dateLabel = () => { const [y, m, d] = DAY.split("-").map(Number); return new Date(y, m - 1, d).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" }); };
-  const realNow = () => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); };
+  const realNow = () => D.parkNow().minutes;
   const now = () => local.nowOverride != null ? local.nowOverride : (isTheDay() ? realNow() : D.START - 15);
 
   /* ---------- people / heights ---------- */
