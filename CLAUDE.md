@@ -40,3 +40,4 @@ Keep every message plain. The user is probably not a developer.
 - No build step, no framework. Keep it working by opening `index.html` from a plain web server.
 - Test at 375px wide with empty storage (a private window). Check the setup flow end to end, then the Now, Day and Map tabs, and look at the browser console for errors.
 - Write user-facing text in plain, full sentences. No em dashes.
+- Before committing, run `/Users/chrisshon/dev/AIOS-AAA/.venv/bin/python tests/smoke.py`. It serves the app with the same security headers as production, runs setup, the four tabs and the feedback form with the database intercepted, and exits 1 on any failure.
