@@ -3,6 +3,7 @@
   const D = window.DD; // built from the setup answers by main.js (planner.js)
   const DAY = D.DAY;
   const CFG = window.DD_CONFIG || {};
+  const W = window.DDWait || { get: () => null, standby: () => null, init() { }, refresh() { } }; // live waits (waits.js); the planner works without them
   /* Optional group sharing. Off unless a Supabase URL and publishable key are set (config.js or the Settings tab). */
   const SB = (() => {
     let own = {}; try { own = JSON.parse(localStorage.getItem("dd-sync") || "{}"); } catch (e) { }
@@ -63,6 +64,20 @@
   const canRide = (p, item) => !item.minInches || inches(p) >= item.minInches;
   const whoFor = item => (state.who[item.id] || item.who).filter(p => canRide(p, item));
   const needsSwitch = item => !!item.minInches && item.who.some(p => !canRide(p, item)) && whoFor(item).some(p => D.PEOPLE[p].role === "adult");
+
+  /* ---------- live waits ---------- */
+  const liveOn = () => local.liveWaits !== false; // the Settings switch is per phone and on by default
+  const LIVE_AHEAD = 120, LIVE_RIDE_MIN = 10;
+  /*
+    The catalog gives each ride one length that already includes a typical line (carrousel 15, Peter Pan 35); it has no separate wait field.
+    For a standby ride that starts within 2 hours of a real visit day, swap that typical line for today's posted wait.
+    The ride itself and loading are taken as about 10 minutes (half the length for short rides). Anything without a live wait keeps its catalog length.
+  */
+  function liveDur(item, start, nowM, dur) {
+    if (item.kind !== "ride" || item.ll === true || local.nowOverride != null || !isTheDay() || start > nowM + LIVE_AHEAD) return dur;
+    const w = W.standby(item.id); if (w == null) return dur;
+    return Math.max(5, Math.min(LIVE_RIDE_MIN, Math.round(dur / 2)) + w);
+  }
 
   /* ---------- engine ---------- */
   function effPriority(item) {
@@ -164,6 +179,7 @@
         start = Math.max(earliest, win[0]);
         if (start > win[1]) { missed.push(id); continue; }
       } else start = earliest;
+      dur = liveDur(item, start, nowM, dur); // real line instead of the catalog estimate, for stops starting in the next 2 hours
       // Look-ahead: would this flexible item make us miss a show we could catch right now?
       if (!item.lock && !item.times && item.fixedAt == null) {
         const nxt = queue.slice(0, 3).find(q => ITEMS[q].times);
@@ -338,6 +354,7 @@
       return location.origin + location.pathname + "#join=" + btoa(JSON.stringify(o));
     },
     copyInvite() { const l = A.inviteLink(); const done = () => { local.shareMsg = "Link copied. Text it to the group."; persistLocal(); render(); }; (navigator.clipboard ? navigator.clipboard.writeText(l).then(done, () => prompt("Copy this link", l)) : prompt("Copy this link", l)); },
+    liveWaits(on) { local.liveWaits = !!on; persistLocal(); W.refresh(); render(); },
     setNow(v) { local.nowOverride = v; persistLocal(); render(); },
     tab(t) { local.tab = t; persistLocal(); render(); },
     toggleDone() { local.showDone = !local.showDone; persistLocal(); render(); },
@@ -428,8 +445,23 @@
   }
   const KIND = { ride: "Ride", show: "Show", meet: "Character meet", meal: "Meal", treat: "Treat", break: "Break", travel: "Travel", task: "To do" };
   const kindTag = item => KIND[item.kind] ? `<span class="tag kind k-${item.kind}">${KIND[item.kind]}</span>` : "";
+  /* Live wait chip, note and credit. Nothing at all when there is no fresh data, the switch is off, or it is not the visit day. */
+  function waitInfo(item) {
+    const e = W.get(item.id); if (!e) return null;
+    if (e.status === "DOWN") return { cls: "down", text: "Down right now", note: "This ride is down right now." };
+    if (e.status === "CLOSED") return { cls: "down", text: "Closed today", note: "This ride is closed today." };
+    if (e.status === "REFURBISHMENT") return { cls: "down", text: "Closed for refurbishment", note: "This ride is closed for refurbishment." };
+    if (e.status !== "OPERATING") return null;
+    if (item.ll === true && e.ret) return { cls: "ll", text: `Lightning Lane return ${fmt(D.parkNow(new Date(e.ret[0])).minutes)}` };
+    if (e.wait == null) return null;
+    return { cls: "", text: e.wait === 0 ? "No wait" : `${e.wait} min wait` };
+  }
+  const waitChip = (row, item) => { const w = row && row.done ? null : waitInfo(item); return w ? `<span class="tag wait ${w.cls}">${esc(w.text)}</span>` : ""; };
+  const waitNote = (row, item) => { const w = row && row.done ? null : waitInfo(item); return w && w.cls === "down" ? `<p class="waitnote">${esc(w.note)} Tap Later to try it afterwards, or Skip to drop it.</p>` : ""; };
+  const waitCredit = show => show ? `<p class="hint credit">Live waits: <a href="https://themeparks.wiki" target="_blank" rel="noopener">Powered by ThemeParks.wiki</a></p>` : "";
   function tags(row, item) {
     const t = [];
+    t.push(waitChip(row, item));
     if (item.ll === true) t.push(`<span class="tag ll">Lightning Lane${state.llReturn[row.id] ? " " + esc(state.llReturn[row.id]) : ""}</span>`);
     else if (item.ll === "book") t.push(`<span class="tag ll">Book Lightning Lane</span>`);
     if (needsSwitch(item)) t.push(`<span class="tag">Rider Switch</span>`);
@@ -515,6 +547,7 @@
       <p class="when">Now · ${fmt(row.start)} to ${fmt(row.end)}</p>
       <h2>${esc(item.title)}</h2>
       <p class="sub">${kindTag(item)}<span>${esc(land.name)} · ${row.dur} min${row.walk ? ` · ${row.walk} min walk` : ""}</span>${tags(row, item)}</p>
+      ${waitNote(row, item)}
       <p class="note">${esc(item.note || "")}</p>
       ${whoChips(item, true)}
       ${actions(row, item)}
@@ -525,7 +558,7 @@
     return `<div class="row ${row.done ? "done" : ""} ${opts.current ? "current" : ""}">
       <span class="t">${fmt(row.start)}${row.walk ? `<small>${row.walk} min walk</small>` : ""}</span>
       ${artTile(item, "thumb")}
-      <div><h3>${esc(item.title)}</h3><p class="sub">${kindTag(item)}<span>${esc(land.name)} · ${row.dur} min</span>${tags(row, item)}</p></div>
+      <div><h3>${esc(item.title)}</h3><p class="sub">${kindTag(item)}<span>${esc(land.name)} · ${row.dur} min</span>${tags(row, item)}</p>${waitNote(row, item)}</div>
     </div>`;
   }
   function detail(row) {
@@ -547,7 +580,8 @@
       ${D.MULTI && nextLL ? `<div class="notice ll">Lightning Lane: when you scan into the current one (or two hours after booking it), book whichever of these has the soonest window: <b>${D.LL_ORDER.filter(id => state.order.includes(id) && state.statuses[id] !== "done" && state.statuses[id] !== "skipped" && !state.llReturn[id]).map(id => esc(shortTitle(ITEMS[id].title))).join(", ")}</b>. Then type the window on that ride with Return time.</div>` : ""}
       ${next.length ? `<h2 class="sec">Then</h2><div class="list">${next.map(r => `<div class="rowwrap" onclick="A.findOnMap('${aid(r.id)}')">${rowHtml(r)}</div>`).join("")}</div>` : ""}
       ${R.dropped.length ? `<h2 class="sec">Dropped to fit the day</h2>${R.dropped.map(id => poolRow(id, "", `<button class="btn sm" onclick="A.pin('${aid(id)}')">Keep it</button>`)).join("")}` : ""}
-      ${R.missed.length ? `<h2 class="sec">No time slot left</h2>${R.missed.map(id => poolRow(id)).join("")}` : ""}`;
+      ${R.missed.length ? `<h2 class="sec">No time slot left</h2>${R.missed.map(id => poolRow(id)).join("")}` : ""}
+      ${waitCredit(pending.slice(0, 5).some(r => waitInfo(ITEMS[r.id])))}`;
   }
 
   function renderDay(R) {
@@ -561,7 +595,8 @@
       ${done.length ? `<button class="donetoggle" onclick="A.toggleDone()" aria-expanded="${local.showDone ? "true" : "false"}"><span>${done.length} done</span><b>${local.showDone ? "Hide" : "Show"}</b></button>${local.showDone ? `<div class="list donelist">${done.map(dayRow).join("")}</div>` : ""}` : ""}
       <div class="list">${pending.map(dayRow).join("")}</div>
       ${R.dropped.length || R.missed.length ? `<h2 class="sec">Not scheduled</h2>${R.dropped.map(id => poolRow(id, "dropped to fit the day", `<button class="btn sm" onclick="A.pin('${aid(id)}')">Keep it</button>`)).join("")}${R.missed.map(id => poolRow(id, "no time slot left")).join("")}` : ""}
-      ${skipped.length ? `<h2 class="sec">Skipped</h2>${skipped.map(id => poolRow(id, "", `<button class="btn sm" onclick="A.undo('${aid(id)}')">Put back</button>`)).join("")}` : ""}`;
+      ${skipped.length ? `<h2 class="sec">Skipped</h2>${skipped.map(id => poolRow(id, "", `<button class="btn sm" onclick="A.undo('${aid(id)}')">Put back</button>`)).join("")}` : ""}
+      ${waitCredit(pending.some(r => waitInfo(ITEMS[r.id])))}`;
   }
 
   function renderFamily() {
@@ -598,6 +633,9 @@
       <div class="pref"><span>Lean toward</span>${sel("lean", [["balanced", "Balanced"], ["characters", "More characters"], ["rides", "More rides"], ["rest", "More rest"]])}</div>
       ${hasNap ? tog("napOn", "Nap or quiet break", "A rest stop in the middle of the day") : ""}
       ${D.KIDS.length ? `<h2 class="sec">Heights</h2>${heights}<p class="hint">Rides with a height limit use these numbers. Update them after you measure.</p>` : ""}
+      <h2 class="sec">Live wait times</h2>
+      <label class="tog"><div><span>Show live wait times</span><small>On the day of your visit, shows how long each line is right now.</small></div><input type="checkbox" id="liveWaits" ${liveOn() ? "checked" : ""} onchange="A.liveWaits(this.checked)"></label>
+      <p class="hint credit"><a href="https://themeparks.wiki" target="_blank" rel="noopener">Powered by ThemeParks.wiki</a></p>
       <h2 class="sec">Add a stop</h2>
       ${pool.map(b => `<div class="pool"><span>${esc(b.title)}<small>${b.minInches ? b.minInches + '" · ' : ""}${b.dur} min</small></span><button class="btn sm" onclick="A.add('${aid(b.id)}')" ${noOneTall(b) ? "disabled title='nobody is tall enough'" : ""}>Add</button></div>`).join("") || "<p class='hint'>Everything is in the plan.</p>"}
       <h2 class="sec">Share with your group</h2>
@@ -803,6 +841,7 @@
     return `<div class="sh"><button class="x" onclick="A.mapSel(null)" aria-label="Close">×</button>
       ${artTile(item, "thumb")}
       <div><p class="when">${row.done ? "Done" : row.id === curId ? "Now" : fmt(row.start)}${row.walk ? ` · ${row.walk} min walk` : ""}</p><h3>${esc(item.title)}</h3><p class="sub">${kindTag(item)}<span>${esc(land.name)} · ${row.dur} min</span>${tags(row, item)}</p></div></div>
+      ${waitNote(row, item)}${waitCredit(waitChip(row, item))}
       <p class="note">${esc(item.note || "")}</p>
       ${whoChips(item, !row.done)}
       ${actions(row, item)}`;
@@ -813,7 +852,8 @@
     const opts = R.rows.filter(r => !r.done && !ITEMS[r.id].lock && r.id !== item.id).map(r => `<option value="${aid(r.id)}">${fmt(r.start)} · ${esc(ITEMS[r.id].title)}</option>`).join("");
     return `<div class="sh"><button class="x" onclick="A.mapSel(null)" aria-label="Close">×</button>
       ${artTile(item, "thumb")}
-      <div><p class="when">Not in the plan</p><h3>${esc(item.title)}</h3><p class="sub">${kindTag(item)}<span>${esc(land.name)} · ${item.dur} min</span>${item.minInches ? `<span class="tag">${item.minInches}"+</span>` : ""}</p></div></div>
+      <div><p class="when">Not in the plan</p><h3>${esc(item.title)}</h3><p class="sub">${kindTag(item)}<span>${esc(land.name)} · ${item.dur} min</span>${waitChip(null, item)}${item.minInches ? `<span class="tag">${item.minInches}"+</span>` : ""}</p></div></div>
+      ${waitCredit(waitChip(null, item))}
       <p class="note">${esc(item.note || "")}${gated ? " Nobody in the group is tall enough for this one." : ""}</p>
       <div class="actions"><button class="btn primary" onclick="A.add('${aid(item.id)}')" ${gated ? "disabled" : ""}>Add to the day</button>
       <select class="swap" ${gated ? "disabled" : ""} onchange="if(this.value)A.swap(this.value,'${aid(item.id)}')"><option value="">Swap it in for…</option>${opts}</select></div>`;
@@ -895,6 +935,8 @@
 
   const start = () => {
     render();
+    // Live waits: only on the day of the visit, and only while the switch in Settings is on. Redraw when new numbers arrive, unless someone is typing.
+    W.init({ enabled: () => liveOn() && isTheDay(), changed: () => { const a = document.activeElement; if (!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) render(); } });
     pull(); pullPos();
     if (SYNC_ON) { setInterval(pull, 5000); setInterval(pullPos, 10000); setInterval(pushPos, 10000); }
     // Skip the minute refresh while someone is typing, so a half-typed answer is not wiped.
