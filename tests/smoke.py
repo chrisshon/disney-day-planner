@@ -4,8 +4,8 @@ Run:  python3 tests/smoke.py   (needs: pip install playwright && playwright inst
 
 Serves this folder on a free port with the same headers vercel.json sends (so the content security
 policy is exercised too), drives the app in a phone-sized browser, and prints one line per check.
-Exits 1 if any check fails. The real database is never contacted: every Supabase request is
-intercepted and answered locally.
+Exits 1 if any check fails. The real database and the live wait feed are never contacted: every Supabase and ThemeParks.wiki
+request is intercepted and answered locally.
 """
 import json
 import re
@@ -56,6 +56,8 @@ def check(name, ok, detail=""):
 
 PNG = bytes.fromhex("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63fcffff3f0300050001a5f645400000000049454e44ae426082")
 DB_CALLS = []  # every request that tried to reach Supabase, so the test can prove none left the machine
+WAIT_IDS = dict(re.findall(r'^\s+(\w+): "([0-9a-f-]{36})"', (ROOT / "waits.js").read_text(), re.M))  # stop id -> live feed id, read from the app
+FEED_RE = re.compile(r"https://api\.themeparks\.wiki/.*")
 
 
 def wire(ctx, feedback_status=201, block_leaflet=False):
@@ -82,6 +84,7 @@ def wire(ctx, feedback_status=201, block_leaflet=False):
 
     ctx.route(re.compile(r"https://[a-z0-9-]+\.supabase\.co/.*"), supabase)
     ctx.route(re.compile(r"https://cdnjs\.cloudflare\.com/.*"), cdn)
+    ctx.route(FEED_RE, lambda r: r.fulfill(status=200, content_type="application/json", body='{"liveData":[]}'))  # default: an empty feed; live-wait checks answer it themselves
     ctx.route(re.compile(r"https://fonts\.googleapis\.com/.*"), lambda r: r.fulfill(status=200, content_type="text/css", body=""))
     ctx.route(re.compile(r"https://fonts\.gstatic\.com/.*"), lambda r: r.fulfill(status=200, body=""))
     ctx.route(re.compile(r"https://(tile\.openstreetmap\.org|cdn6\.parksmedia\.wdprapps\.disney\.com)/.*"), lambda r: r.fulfill(status=200, content_type="image/png", body=PNG))
@@ -276,6 +279,150 @@ def main():
         page.evaluate("A.tab('map')")
         page.wait_for_timeout(300)
         check("Map tab explains itself when the library is blocked", "could not load" in page.locator("#view").inner_text())
+        ctx.close()
+
+
+        # 5. Live wait times. The feed is always answered by the test; the real one is never contacted.
+        FRESH, STALE = "2026-11-20T16:59:30Z", "2026-11-20T16:30:00Z"  # the fake page clock reads 9:00 am Pacific = 17:00Z
+
+        def feed_body(entries, updated=FRESH):
+            live = []
+            for cid, e in entries.items():
+                q = {}
+                if e.get("wait") is not None:
+                    q["STANDBY"] = {"waitTime": e["wait"]}
+                if e.get("ret"):
+                    q["RETURN_TIME"] = {"state": "AVAILABLE", "returnStart": e["ret"][0], "returnEnd": e["ret"][1]}
+                live.append({"id": WAIT_IDS[cid], "name": cid, "entityType": "ATTRACTION", "status": e.get("status", "OPERATING"), "lastUpdated": updated, "queue": q})
+            return json.dumps({"id": "park", "liveData": live})
+
+        def live_page(entries=None, updated=FRESH, mode="ok", on_visit_day=True):
+            """A phone on the visit day (9:00 am Pacific) whose wait feed is answered by this test."""
+            ctx = browser.new_context(viewport={"width": 375, "height": 812})
+            wire(ctx)
+            feed = {"calls": 0}
+
+            def handler(route):
+                feed["calls"] += 1
+                if mode == "abort":
+                    return route.abort()
+                if mode == "503":
+                    return route.fulfill(status=503, body="unavailable")
+                if mode == "garbage":
+                    return route.fulfill(status=200, content_type="application/json", body="<html>not json")
+                route.fulfill(status=200, content_type="application/json", body=feed_body(entries or {}, updated))
+
+            ctx.route(FEED_RE, handler)
+            page = ctx.new_page()
+            errs = watch(page)
+            page.add_init_script("localStorage.setItem('dd-profile',%s);localStorage.setItem('dd-intro',String(Date.now()));" % json.dumps(json.dumps(PROFILE)))
+            if on_visit_day:
+                page.clock.install(time="2026-11-20T17:00:00Z")
+            page.goto(base)
+            page.wait_for_selector(".tabs button", timeout=15000)
+            until(page, "() => !!window.A")
+            return ctx, page, errs, feed
+
+        ROWS = """() => [...document.querySelectorAll('#view .list .rowwrap')].map(r => ({
+            title: r.querySelector('h3').textContent, t: r.querySelector('.t').childNodes[0].textContent.trim(),
+            chips: [...r.querySelectorAll('.tag.wait')].map(x => x.textContent), note: (r.querySelector('.waitnote') || {}).textContent || ''}))"""
+        KINDS = "() => Object.fromEntries(DD.PLAN.concat(DD.BONUS).map(i => [i.title, {id: i.id, kind: i.kind, ll: i.ll === true}]))"
+
+        def minutes(t):
+            m = re.match(r"(\d+):(\d+) (am|pm)", t)
+            h = int(m.group(1)) % 12 + (12 if m.group(3) == "pm" else 0)
+            return h * 60 + int(m.group(2))
+
+        def day_rows(page):
+            page.evaluate("A.tab('day')")
+            page.wait_for_timeout(250)
+            return page.evaluate(ROWS)
+
+        # 5a. Baseline plan with an empty feed, and pick the stops to test from it.
+        ctx, page, errs, feed = live_page({})
+        until(page, "() => true")
+        page.wait_for_timeout(500)
+        base_rows = day_rows(page)
+        kinds = page.evaluate(KINDS)
+        rides = [i for i, r in enumerate(base_rows) if kinds.get(r["title"], {}).get("kind") == "ride" and not kinds[r["title"]]["ll"]]
+        ll_rides = [i for i, r in enumerate(base_rows) if kinds.get(r["title"], {}).get("ll")]
+        check("Empty live feed shows no wait chips and no credit link", not any(r["chips"] for r in base_rows) and page.locator("#view a[href='https://themeparks.wiki']").count() == 0)
+        ctx.close()
+        i_r, i_d = rides[0], rides[1]
+        R, N, DN = base_rows[i_r], base_rows[i_r + 1], base_rows[i_d]
+        rid, did = kinds[R["title"]]["id"], kinds[DN["title"]]["id"]
+        lid = kinds[base_rows[ll_rides[0]]["title"]]["id"] if ll_rides else None
+        print(f"      (live test uses ride={rid}, next stop={N['title']}, down={did}, lightning={lid})")
+
+        entries = {rid: {"wait": 45}, did: {"status": "DOWN"}}
+        if lid:
+            entries[lid] = {"wait": 20, "ret": ("2026-11-20T14:40:00-08:00", "2026-11-20T15:40:00-08:00")}
+        ctx, page, errs, feed = live_page(entries)
+        until(page, "() => !!window.A")
+        page.evaluate("A.tab('day')")
+        until(page, "() => !!document.querySelector('#view .tag.wait')")
+        rows = page.evaluate(ROWS)
+        by = {r["title"]: r for r in rows}
+        check("A ride shows its live wait as a chip", by[R["title"]]["chips"] == ["45 min wait"], str(by[R["title"]]["chips"]))
+        check("A ride that is down shows 'Down right now' and a note about Later or Skip", by[DN["title"]]["chips"] == ["Down right now"] and "Later" in by[DN["title"]]["note"] and "Skip" in by[DN["title"]]["note"], str(by[DN["title"]]))
+        if lid:
+            check("A Lightning Lane ride shows its next return time", by[base_rows[ll_rides[0]]["title"]]["chips"] == ["Lightning Lane return 2:40 pm"], str(by[base_rows[ll_rides[0]]["title"]]["chips"]))
+        n_live = next(r for r in rows if r["title"] == N["title"])
+        check("The plan uses the live wait: the next stop starts later than with no live data", minutes(n_live["t"]) > minutes(N["t"]), f"{N['t']} -> {n_live['t']}")
+        check("The Day tab credits ThemeParks.wiki with a link", page.locator("#view a[href='https://themeparks.wiki']", has_text="Powered by ThemeParks.wiki").count() == 1)
+        page.evaluate("A.tab('settings')")
+        page.wait_for_timeout(200)
+        check("Settings has the Live wait times switch (on) and the credit link", page.locator("#liveWaits").is_checked() and page.locator("#view a[href='https://themeparks.wiki']").count() == 1)
+        if st2["cdn_offline"]:
+            print("SKIP  Map pin sheet shows the wait  (no network to the CDN)")
+        else:
+            page.evaluate("A.tab('map')")
+            page.wait_for_timeout(500)
+            page.evaluate("id => A.mapSel(id)", rid)
+            page.wait_for_timeout(300)
+            check("The Map pin sheet shows the wait", "45 min wait" in page.locator("#sheet").inner_text(), page.locator("#sheet").inner_text()[:80])
+        page.evaluate("A.tab('now')")
+        page.wait_for_timeout(250)
+        check("The Now tab shows the wait on the current stop or the ones after it", page.locator("#view .tag.wait").count() >= 1)
+        check("The page asked for the feed once, not repeatedly", feed["calls"] == 1, str(feed["calls"]))
+        # Switch off: chips, credit and the longer plan all go away. Switch on: they return from what was already fetched.
+        page.evaluate("A.tab('settings')")
+        page.wait_for_timeout(200)
+        page.locator("#liveWaits").uncheck()
+        page.wait_for_timeout(250)
+        off_rows = day_rows(page)
+        off_n = next(r for r in off_rows if r["title"] == N["title"])
+        check("Switching live waits off hides every wait, the credit and the live plan", not any(r["chips"] or r["note"] for r in off_rows) and page.locator("#view a[href='https://themeparks.wiki']").count() == 0 and off_n["t"] == N["t"], f"{off_n['t']} vs {N['t']}")
+        check("The switch is saved with the other phone settings", page.evaluate("JSON.parse(localStorage.getItem('dd-local')).liveWaits") is False)
+        page.evaluate("A.tab('settings')")
+        page.wait_for_timeout(200)
+        page.locator("#liveWaits").check()
+        page.wait_for_timeout(250)
+        check("Switching live waits back on shows them again", any(r["chips"] for r in day_rows(page)))
+        check("No console or page errors with live waits on", not [e for e in errs if not (st2["cdn_offline"] and "cdnjs" in e)], "; ".join(errs[:3]))
+        ctx.close()
+
+        # 5b. Old data counts as missing.
+        ctx, page, errs, feed = live_page(entries, updated=STALE)
+        page.wait_for_timeout(600)
+        check("Data older than 15 minutes is not shown or used", feed["calls"] >= 1 and not any(r["chips"] for r in day_rows(page)) and next(r for r in page.evaluate(ROWS) if r["title"] == N["title"])["t"] == N["t"])
+        ctx.close()
+
+        # 5c. The feed failing in each way leaves the app quiet and unchanged.
+        for mode in ("garbage", "503", "abort"):
+            ctx, page, errs, feed = live_page(entries, mode=mode)
+            page.wait_for_timeout(600)
+            rows = day_rows(page)
+            # The browser itself logs a line for a failed request; that is not an app error, so it is the only thing allowed through.
+            real = [e for e in errs if "Failed to load resource" not in e and not (st2["cdn_offline"] and "cdnjs" in e)]
+            same = [(r["title"], r["t"]) for r in rows] == [(r["title"], r["t"]) for r in base_rows]
+            check(f"Feed failure ({mode}): no wait shown, plan unchanged, no errors", feed["calls"] >= 1 and not any(r["chips"] for r in rows) and same and not real and (mode != "garbage" or not errs), "; ".join(errs[:3]))
+            ctx.close()
+
+        # 5d. Not the visit day: the feed is never asked.
+        ctx, page, errs, feed = live_page(entries, on_visit_day=False)
+        page.wait_for_timeout(800)
+        check("No feed request on a day that is not the visit day", feed["calls"] == 0, str(feed["calls"]))
         ctx.close()
 
         browser.close()
