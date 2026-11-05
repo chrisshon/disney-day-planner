@@ -53,7 +53,7 @@
       const name = p.name.trim();
       let short = name[0].toUpperCase(); if (used[short]) short = name.slice(0, 2); used[short] = 1;
       PEOPLE[id] = { name, short, color: PALETTE[i % PALETTE.length], role: p.kid ? "kid" : "adult",
-        age: p.kid ? p.age : null, inchesEst: !!p.kid && !p.inches, inches: p.kid ? (p.inches || K.estimateInches(p.age)) : (p.inches || 66), estimated: p.kid && !p.inches };
+        age: p.kid ? p.age : null, inches: p.kid ? (p.inches || K.estimateInches(p.age)) : (p.inches || 66), estimated: p.kid && !p.inches };
     });
     const ADULTS = ALL.filter(id => PEOPLE[id].role === "adult");
     const KIDS = ALL.filter(id => PEOPLE[id].role === "kid");

@@ -54,7 +54,7 @@
   /* ---------- people / heights ---------- */
   const inches = p => (state.prefs.heights && state.prefs.heights[p]) || D.PEOPLE[p].inches;
   // A height guessed from age, within 2 inches of a limit, must be measured before anyone relies on it.
-  const guessNear = (p, item) => !!item.minInches && !!D.PEOPLE[p].inchesEst && !(state.prefs.heights && state.prefs.heights[p]) && Math.abs(inches(p) - item.minInches) <= 2;
+  const guessNear = (p, item) => !!item.minInches && !!D.PEOPLE[p].estimated && !(state.prefs.heights && state.prefs.heights[p]) && Math.abs(inches(p) - item.minInches) <= 2;
   const canRide = (p, item) => !item.minInches || inches(p) >= item.minInches;
   const whoFor = item => (state.who[item.id] || item.who).filter(p => canRide(p, item));
   const needsSwitch = item => !!item.minInches && item.who.some(p => !canRide(p, item)) && whoFor(item).some(p => D.PEOPLE[p].role === "adult");
