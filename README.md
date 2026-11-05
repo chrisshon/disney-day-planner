@@ -66,7 +66,9 @@ This lets everyone in your group see the same plan, mark rides done, and see eac
 
 You can also put the URL and key in `config.js` so every copy of the app starts with sharing ready.
 
-Be aware of how this is protected. Each group gets a long random code, and the database only returns rows for a code you hand over. Anyone who has your invite link can read and edit your plan and see your group's locations. Do not post the link publicly. Delete the project when the trip is over.
+Be aware of how this is protected. Each group gets a long random code, and the app sends that code with every request. The database only answers a request that carries the matching code, so the key alone cannot list other groups' plans. Anyone who has your invite link can read and edit your plan and see your group's locations. Do not post the link publicly. Delete the project when the trip is over.
+
+If you turned on sharing before this protection existed, open the SQL Editor and run the current `schema.sql` once more. It replaces the old open rules.
 
 ## Maps and rights
 
@@ -90,7 +92,11 @@ Ride height limits and details in `catalog.js` are from general knowledge and ch
 | `main.js` | Decides whether to show setup or the plan |
 | `config.js` | Optional settings |
 | `paths.js` | Walkway data from OpenStreetMap |
-| `schema.sql` | The two tables for group sharing |
+| `schema.sql` | The two tables for group sharing, and the table that collects feedback notes |
+
+## Feedback
+
+**Settings, then Send feedback** sends a short note to the person who made the planner. It includes the screen you were on, the app version and your browser type. It never includes names, your answers or your location. An email address is optional and only used to reply. The notes are read weekly. To hide the button in your own copy, set `feedback.url` to `""` in `config.js`.
 
 ## Start over
 

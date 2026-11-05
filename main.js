@@ -45,12 +45,13 @@
     let mine = {}; try { mine = JSON.parse(get("dd-sync") || "{}") || {}; } catch (e) { }
     if (get("dd-profile") && mine.slug !== slug && !confirm("This link will replace the plan saved on this phone with your group's plan. Replace it?")) return true;
     try {
-      const r = await fetch(`${url}/rest/v1/disney_plan?slug=eq.${encodeURIComponent(slug)}&select=state,updated_at`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+      const r = await fetch(`${url}/rest/v1/disney_plan?slug=eq.${encodeURIComponent(slug)}&select=state,updated_at`, { headers: { apikey: key, Authorization: `Bearer ${key}`, "x-group": slug } });
       if (!r.ok) throw new Error(r.status);
       const rows = await r.json();
       if (!Array.isArray(rows) || !rows.length || !rows[0].state || !rows[0].state.profile) { showNote("That group has no plan yet", "Ask whoever sent the link to open the app once so their plan saves, then try again.", true); return false; }
       const prof = rows[0].state.profile;
       try { K.checkProfile(prof); if (prof.v !== 1) throw new Error("version"); } catch (e) { showNote("That group's plan could not be read", "Ask whoever sent the link to open the app once and send the link again.", false); return false; }
+      del("dd-acked");
       set("dd-sync", JSON.stringify({ url, key, slug }));
       set("dd-profile", JSON.stringify(prof));
       set("dd-state", JSON.stringify({ ...rows[0].state, updatedAt: rows[0].updated_at }));
@@ -66,7 +67,7 @@
       onCancel: initial ? () => { location.href = location.pathname; } : null,
       onDone: profile => {
         set("dd-profile", JSON.stringify(profile));
-        del("dd-state"); del("dd-intro");
+        del("dd-state"); del("dd-intro"); del("dd-acked");
         if (get("dd-sync")) set("dd-force-push", "1"); // the new plan replaces the group's old one
         location.replace(location.pathname);
       },

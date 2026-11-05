@@ -10,6 +10,9 @@
     return { url: (own.url || c.url || "").replace(/\/+$/, ""), key: own.key || c.key || "", slug: own.slug || "" };
   })();
   const SYNC_ON = !!(SB.url && SB.key && SB.slug);
+  // Every sharing request carries the group code in a header. The database only answers for that group (see schema.sql).
+  const hdr = () => ({ apikey: SB.key, Authorization: `Bearer ${SB.key}`, "x-group": SB.slug });
+  const SLUGQ = encodeURIComponent(SB.slug);
 
   /* ---------- state ---------- */
   const blank = () => ({
@@ -189,8 +192,18 @@
   const validProfile = p => { try { window.DDK.checkProfile(p); return !!p && p.v === 1; } catch (e) { return false; } };
   let saveTimer = null;
   function persistLocal() { try { localStorage.setItem("dd-state", JSON.stringify(state)); localStorage.setItem("dd-local", JSON.stringify({ ...local, nowOverride: null })); } catch (e) { } }
-  function commit() { state.updatedAt = new Date().toISOString(); persistLocal(); render(); clearTimeout(saveTimer); if (SYNC_ON) saveTimer = setTimeout(push, 400); }
-  let acked = null; // the plan as the server last confirmed it, so edits from two phones can be merged
+  function commit() { state.updatedAt = stamp(); persistLocal(); render(); clearTimeout(saveTimer); if (SYNC_ON) saveTimer = setTimeout(push, 400); }
+  /* The plan as the server last confirmed it, so edits from two phones can be merged. Kept on the phone, so edits made offline still merge after a reload. */
+  const ACK_KEY = "dd-acked";
+  let acked = (() => { try { const a = JSON.parse(localStorage.getItem(ACK_KEY) || "null"); return a && a.slug === SB.slug && a.state && typeof a.state === "object" ? a.state : null; } catch (e) { return null; } })();
+  const setAcked = v => { acked = v; try { if (v) localStorage.setItem(ACK_KEY, JSON.stringify({ slug: SB.slug, state: v })); else localStorage.removeItem(ACK_KEY); } catch (e) { } };
+  /* Phone clocks can differ. Never stamp an edit older than the newest save we have seen from the group, or it would lose to that save. */
+  let lastRemoteMs = 0;
+  const stamp = () => new Date(Math.max(Date.now(), lastRemoteMs + 1)).toISOString();
+  const seen = v => { lastRemoteMs = Math.max(lastRemoteMs, Date.parse(v || 0) || 0); };
+  const stable = o => JSON.stringify(o, (k, v) => (v && typeof v === "object" && !Array.isArray(v) ? Object.keys(v).sort().reduce((a, x) => (a[x] = v[x], a), {}) : v));
+  // The database may return keys in a different order, so compare profiles with their keys sorted.
+  const sameProfile = (a, b) => stable({ ...window.DDK.defaultProfile(), ...a }) === stable({ ...window.DDK.defaultProfile(), ...b });
   const clone = o => JSON.parse(JSON.stringify(o));
   const ts = v => Date.parse(v || 0) || 0;
   function mergeStates(remote, base, mine) {
@@ -212,21 +225,22 @@
     if (!SYNC_ON) return;
     try {
       // Re-read the server first. If another phone saved since our last confirmed copy, merge before writing so nobody's edit is erased.
-      const r0 = force ? { ok: false } : await fetch(`${SB.url}/rest/v1/disney_plan?slug=eq.${SB.slug}&select=state,updated_at`, { headers: { apikey: SB.key, Authorization: `Bearer ${SB.key}` } });
+      const r0 = force ? { ok: false } : await fetch(`${SB.url}/rest/v1/disney_plan?slug=eq.${SLUGQ}&select=state,updated_at`, { headers: hdr() });
       if (r0.ok) { const rows0 = await r0.json();
+        if (rows0.length) seen(rows0[0].updated_at);
         if (rows0.length && rows0[0].state && validProfile(rows0[0].state.profile) && ts(rows0[0].updated_at) > ts(acked ? acked.updatedAt : 0)) {
           const base = acked || blank();
-          state = sane({ ...mergeStates(rows0[0].state, base, state), updatedAt: new Date().toISOString() });
-          acked = { ...clone(rows0[0].state), updatedAt: rows0[0].updated_at }; persistLocal(); render();
+          state = sane({ ...mergeStates(rows0[0].state, base, state), updatedAt: stamp() });
+          setAcked({ ...clone(rows0[0].state), updatedAt: rows0[0].updated_at }); persistLocal(); render();
         } }
     } catch (e) { }
     const sent = clone(state);
     try {
       const r = await fetch(`${SB.url}/rest/v1/disney_plan`, {
-        method: "POST", headers: { apikey: SB.key, Authorization: `Bearer ${SB.key}`, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" },
+        method: "POST", headers: { ...hdr(), "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" },
         body: JSON.stringify([{ slug: SB.slug, state: sent, updated_at: sent.updatedAt }]),
       });
-      if (r.ok) { acked = sent; local.remoteAt = sent.updatedAt; local.syncStatus = "synced"; if (force) { force = false; try { localStorage.removeItem("dd-force-push"); } catch (e) { } } }
+      if (r.ok) { setAcked(sent); local.remoteAt = sent.updatedAt; local.syncStatus = "synced"; if (force) { force = false; try { localStorage.removeItem("dd-force-push"); } catch (e) { } } }
       else local.syncStatus = "save failed";
     } catch (e) { local.syncStatus = "offline"; }
     renderSync(); if (modal) renderModal();
@@ -234,29 +248,29 @@
   async function pull() {
     if (!SYNC_ON) return;
     try {
-      const r = await fetch(`${SB.url}/rest/v1/disney_plan?slug=eq.${SB.slug}&select=state,updated_at`, { headers: { apikey: SB.key, Authorization: `Bearer ${SB.key}` } });
+      const r = await fetch(`${SB.url}/rest/v1/disney_plan?slug=eq.${SLUGQ}&select=state,updated_at`, { headers: hdr() });
       if (!r.ok) throw new Error(r.status);
       const rows = await r.json();
       if (rows.length) {
-        const remote = rows[0];
+        const remote = rows[0]; seen(remote.updated_at);
         if (!remote.state || !validProfile(remote.state.profile)) { local.syncStatus = "offline"; renderSync(); return; } // never run a plan the app cannot read safely
         const pending = acked && JSON.stringify({ ...state, updatedAt: 0 }) !== JSON.stringify({ ...acked, updatedAt: 0 });
-        if (!force && remote.state.profile && JSON.stringify(remote.state.profile) !== JSON.stringify(D.PROFILE) && ts(remote.updated_at) > ts(state.updatedAt)) {
+        if (!force && remote.state.profile && !sameProfile(remote.state.profile, D.PROFILE) && ts(remote.updated_at) > ts(state.updatedAt)) {
           // Someone in the group redid the setup. Adopt their trip details and rebuild this phone's plan.
-          try { localStorage.setItem("dd-profile", JSON.stringify(remote.state.profile)); localStorage.setItem("dd-state", JSON.stringify({ ...remote.state, updatedAt: remote.updated_at })); } catch (e) { }
+          try { localStorage.setItem("dd-profile", JSON.stringify(remote.state.profile)); localStorage.setItem("dd-state", JSON.stringify({ ...remote.state, updatedAt: remote.updated_at })); localStorage.removeItem(ACK_KEY); } catch (e) { }
           location.reload(); return;
         }
         if (!state.updatedAt || ts(remote.updated_at) > ts(state.updatedAt)) {
           if (pending) {
             // Another phone saved while this one had unsaved edits: keep both.
-            state = sane({ ...mergeStates(remote.state, acked, state), updatedAt: new Date().toISOString() });
-            acked = clone(remote.state); persistLocal(); render(); push(); return;
+            state = sane({ ...mergeStates(remote.state, acked, state), updatedAt: stamp() });
+            setAcked(clone(remote.state)); persistLocal(); render(); push(); return;
           }
-          state = sane({ ...remote.state, updatedAt: remote.updated_at }); acked = clone(state); persistLocal(); render();
+          state = sane({ ...remote.state, updatedAt: remote.updated_at }); setAcked(clone(state)); persistLocal(); render();
           local.syncStatus = "synced";
         } else if (ts(remote.updated_at) < ts(state.updatedAt)) { push(); return; }
-        else { if (!acked) acked = clone(state); local.syncStatus = "synced"; }
-      } else { if (!state.updatedAt) state.updatedAt = new Date().toISOString(); persistLocal(); push(); return; }
+        else { if (!acked) setAcked(clone(state)); local.syncStatus = "synced"; }
+      } else { if (!state.updatedAt) state.updatedAt = stamp(); persistLocal(); push(); return; }
     } catch (e) { local.syncStatus = "offline"; }
     renderSync();
   }
@@ -305,12 +319,12 @@
     redoSetup() { if (!confirm("Redo setup? You will answer the questions again and the plan is rebuilt from your new answers.")) return; location.href = "?setup"; },
     shareOn() {
       const url = ($("#sbUrl") || {}).value, key = ($("#sbKey") || {}).value;
-      const own = { url: (url || CFG.sharing && CFG.sharing.url || "").trim(), key: (key || CFG.sharing && CFG.sharing.key || "").trim(), slug: "g" + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 8) };
+      const own = { url: (url || CFG.sharing && CFG.sharing.url || "").trim(), key: (key || CFG.sharing && CFG.sharing.key || "").trim(), slug: "g" + Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("") };
       if (!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(own.url) || own.key.length < 20) { local.shareMsg = "Paste the project URL (it ends in .supabase.co) and the publishable key from your Supabase project."; persistLocal(); render(); return; }
       try { localStorage.setItem("dd-sync", JSON.stringify(own)); localStorage.setItem("dd-force-push", "1"); } catch (e) { }
       location.reload();
     },
-    shareOff() { if (!confirm("Turn sharing off on this phone? The plan stays here, and other phones keep what they have.")) return; try { localStorage.removeItem("dd-sync"); } catch (e) { } location.reload(); },
+    shareOff() { if (!confirm("Turn sharing off on this phone? The plan stays here, and other phones keep what they have.")) return; try { localStorage.removeItem("dd-sync"); localStorage.removeItem(ACK_KEY); } catch (e) { } location.reload(); },
     inviteLink() {
       const o = {}; let own = {}; try { own = JSON.parse(localStorage.getItem("dd-sync") || "{}"); } catch (e) { }
       const c = CFG.sharing || {}; o.s = SB.slug; if (own.url && own.url !== c.url) o.u = own.url; if (own.key && own.key !== c.key) o.k = own.key;
@@ -699,14 +713,14 @@
     if (!SYNC_ON || !myPos || !local.me || Date.now() - lastPosPush < 10000) return;
     lastPosPush = Date.now();
     try {
-      await fetch(`${SB.url}/rest/v1/disney_pos`, { method: "POST", headers: { apikey: SB.key, Authorization: `Bearer ${SB.key}`, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" },
+      await fetch(`${SB.url}/rest/v1/disney_pos`, { method: "POST", headers: { ...hdr(), "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" },
         body: JSON.stringify([{ slug: SB.slug, person: local.me, lat: myPos.lat, lon: myPos.lon, acc: myPos.acc, updated_at: new Date().toISOString() }]) });
     } catch (e) { }
   }
   async function pullPos() {
     if (!SYNC_ON) return;
     try {
-      const r = await fetch(`${SB.url}/rest/v1/disney_pos?slug=eq.${SB.slug}&select=person,lat,lon,acc,updated_at`, { headers: { apikey: SB.key, Authorization: `Bearer ${SB.key}` } });
+      const r = await fetch(`${SB.url}/rest/v1/disney_pos?slug=eq.${SLUGQ}&select=person,lat,lon,acc,updated_at`, { headers: hdr() });
       if (!r.ok) return;
       const rows = await r.json(); famPos = {};
       rows.forEach(x => { famPos[x.person] = x; });
