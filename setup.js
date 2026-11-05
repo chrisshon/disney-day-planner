@@ -85,7 +85,7 @@ window.DDSetup = (function () {
       eyebrow: "Step 4 of 5", title: "Your must-do <em>rides</em>",
       lead: "Tap anything you do not want to miss. The plan puts these in first and fills the rest of the day around them. Skip this and the planner picks a good mix.",
       html: () => {
-        const names = S.people.map(p => ({ n: p.name, h: heightOf(p) }));
+        const names = S.people.map(p => ({ n: p.name, h: heightOf(p), est: !!p.kid && !p.inches }));
         const KO = { ride: 0, meet: 1, show: 2, meal: 3, treat: 4 };
         const items = K.CATALOG.filter(c => c.kind !== "break").sort((a, b) => (KO[a.kind] ?? 5) - (KO[b.kind] ?? 5));
         const lands = TOUR.filter(l => items.some(i => i.land === l));
@@ -94,7 +94,8 @@ window.DDSetup = (function () {
           <p class="grp">${esc(K.LANDS[l].name)}</p>
           ${items.filter(i => i.land === l).map(i => {
             const short = i.minInches ? names.filter(x => x.h < i.minInches) : [];
-            const note = i.minInches ? (short.length === names.length ? `<span class="warn">${i.minInches} in, nobody is tall enough</span>` : short.length ? `${i.minInches} in. ${esc(short.map(x => x.n).join(", "))} too short, use Rider Switch` : `${i.minInches} in, everyone clears it`) : (i.kind === "ride" ? "Any height" : i.kind === "meet" ? "Character meet" : "Show");
+            const close = i.minInches ? names.filter(x => x.est && Math.abs(x.h - i.minInches) <= 2) : []; // an age-based guess this near the limit is not safe to trust
+            const note = i.minInches ? (short.length === names.length ? `<span class="warn">${i.minInches} in, nobody is tall enough</span>` : short.length ? `${i.minInches} in. ${esc(short.map(x => x.n).join(", "))} too short, use Rider Switch` : close.length ? `${i.minInches} in. Measure ${esc(close.map(x => x.n).join(", "))} first, the height is a guess` : `${i.minInches} in, everyone clears it`) : (i.kind === "ride" ? "Any height" : i.kind === "meet" ? "Character meet" : "Show");
             return `<button class="pick ${sel.has(i.id) ? "on" : ""}" data-pick="${i.id}" ${i.minInches && short.length === names.length ? "disabled style=opacity:.4" : ""}>
               <span class="thumb art" style="--c:${K.LANDS[i.land].color}"><i>${i.icon || "✦"}</i></span>
               <span><b>${esc(i.title)}</b><small>${note}</small></span><span class="mark">✓</span></button>`;

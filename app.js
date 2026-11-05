@@ -53,6 +53,8 @@
 
   /* ---------- people / heights ---------- */
   const inches = p => (state.prefs.heights && state.prefs.heights[p]) || D.PEOPLE[p].inches;
+  // A height guessed from age, within 2 inches of a limit, must be measured before anyone relies on it.
+  const guessNear = (p, item) => !!item.minInches && !!D.PEOPLE[p].inchesEst && !(state.prefs.heights && state.prefs.heights[p]) && Math.abs(inches(p) - item.minInches) <= 2;
   const canRide = (p, item) => !item.minInches || inches(p) >= item.minInches;
   const whoFor = item => (state.who[item.id] || item.who).filter(p => canRide(p, item));
   const needsSwitch = item => !!item.minInches && item.who.some(p => !canRide(p, item)) && whoFor(item).some(p => D.PEOPLE[p].role === "adult");
@@ -514,7 +516,7 @@
     return `<div class="family">${D.ALL.map(p => { const P = D.PEOPLE[p]; return `<div class="person">${avatar(p, 72)}<h3>${esc(P.name)}</h3><small>${P.role === "kid" ? inches(p) + " in" : "adult"}</small></div>`; }).join("")}</div>
       <h2 class="sec">Who can ride</h2>
       <table class="rides"><tr><th>Ride</th><th>Min</th>${kids.map(k => `<th>${esc(D.PEOPLE[k].name.slice(0, 7))}</th>`).join("")}</tr>
-      ${D.PLAN.concat(D.BONUS).filter(i => i.kind === "ride").map(i => `<tr><td>${esc(i.title)}</td><td>${i.minInches ? i.minInches + '"' : "any"}</td>${kids.map(k => `<td class="${canRide(k, i) ? "ok" : "no"}">${canRide(k, i) ? "Yes" : "No"}</td>`).join("")}</tr>`).join("")}</table>
+      ${D.PLAN.concat(D.BONUS).filter(i => i.kind === "ride").map(i => `<tr><td>${esc(i.title)}</td><td>${i.minInches ? i.minInches + '"' : "any"}</td>${kids.map(k => `<td class="${guessNear(k, i) ? "no" : canRide(k, i) ? "ok" : "no"}">${guessNear(k, i) ? "Measure first" : canRide(k, i) ? "Yes" : "No"}</td>`).join("")}</tr>`).join("")}</table>
       ${kids.length ? "" : `<p class="hint">Nobody in this group has a height limit.</p>`}
       <h2 class="sec">Rider Switch</h2><p class="hint">The whole group walks up. One adult waits with anyone who is too short, the others ride, then the waiting adult rides straight away without queueing again. Ask at the ride entrance.</p>
       ${occ ? `<h2 class="sec">${esc(occ.tag)}</h2><p class="hint">Get a free celebration button at City Hall first thing, plan a treat in the afternoon, and tell cast members whenever you can.${occ.label && occ.kind === "other" ? " " + esc(occ.label) + "." : ""}</p>` : ""}`;
