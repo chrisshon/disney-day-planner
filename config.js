@@ -10,9 +10,14 @@
     Nothing from Disney is stored in this repo. Set false to use the free street map only.
 
   parkMapUrl: leave empty to use the default. Set it only if you host your own tiles.
+
+  feedback: where the Send feedback button on the Settings tab sends notes. Notes go to the person who made
+    the planner, who reads them weekly. The URL and publishable key are meant to be public. Set url to ""
+    to hide the button (for example in your own copy).
 */
 window.DD_CONFIG = {
   sharing: { url: "", key: "" },
   disneyMapTiles: true,
   parkMapUrl: "",
+  feedback: { url: "https://numipmedkfrcwfjikcxv.supabase.co", key: "sb_publishable_wkZJwHrOEGqj2g6UnVbulw_E6R1Msj2" },
 };

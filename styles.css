@@ -347,7 +347,8 @@ body.modal-open { overflow: hidden; }
 .pref small.sm { display: block; color: var(--muted); font-size: 12px; }
 .field { display: grid; gap: 10px; margin-top: 12px; }
 .field label, .sfield { display: grid; gap: 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
-.field input, .sfield input, .sfield select { font: inherit; font-size: 16px; color: var(--ink); background: var(--card2); border: 1px solid rgba(255,255,255,.18); border-radius: 12px; padding: 12px 14px; width: 100%; min-height: 46px; }
+.field input, .field textarea, .sfield input, .sfield select { font: inherit; font-size: 16px; color: var(--ink); background: var(--card2); border: 1px solid rgba(255,255,255,.18); border-radius: 12px; padding: 12px 14px; width: 100%; min-height: 46px; }
+.field textarea { resize: vertical; min-height: 120px; line-height: 1.4; }
 .field input::placeholder, .sfield input::placeholder { color: rgba(169,168,195,.55); }
 
 /* ---------- setup (first open) ---------- */
@@ -391,3 +392,7 @@ body.setup { padding-bottom: 24px; }
 #setup .chips button.on { background: rgba(243,213,138,.16); border-color: rgba(243,213,138,.5); color: var(--gold2); }
 #setup .recap { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; font-size: 14px; color: var(--muted); line-height: 1.6; }
 #setup .recap b { color: var(--ink); font-weight: 600; }
+
+#modal .fbbody { padding: 0 20px 8px; overflow: auto; -webkit-overflow-scrolling: touch; }
+#modal .fberr { color: #f6ad55; min-height: 1.2em; margin: 8px 0 0; }
+#modal .fbthanks { font-size: 16px; margin: 12px 0 16px; }

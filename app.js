@@ -10,6 +10,11 @@
     return { url: (own.url || c.url || "").replace(/\/+$/, ""), key: own.key || c.key || "", slug: own.slug || "" };
   })();
   const SYNC_ON = !!(SB.url && SB.key && SB.slug);
+  const APP_VERSION = "2026.11.04";
+  const FBC = (window.DD_CONFIG && window.DD_CONFIG.feedback) || {};
+  const FB = { url: String(FBC.url || "").trim().replace(/\/+$/, ""), key: String(FBC.key || "").trim() };
+  const FB_ON = /^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(FB.url) && FB.key.length > 20; // empty url hides the button
+  const FB_KEY = "dd-fb-sent", FB_MAX = 3, FB_WINDOW = 10 * 60 * 1000;
   // Every sharing request carries the group code in a header. The database only answers for that group (see schema.sql).
   const hdr = () => ({ apikey: SB.key, Authorization: `Bearer ${SB.key}`, "x-group": SB.slug });
   const SLUGQ = encodeURIComponent(SB.slug);
@@ -341,6 +346,54 @@
     swapFilter(f) { if (modal) { modal.f = f; renderModal(); } },
     swapAll() { if (modal) { modal.all = !modal.all; renderModal(); } },
     closeModal() { modal = null; renderModal(); },
+    fbOpen() {
+      if (!FB_ON) return;
+      modal = { feedback: true };
+      const host = $("#modal") || (() => { const h = document.createElement("div"); h.id = "modal"; document.body.appendChild(h); return h; })();
+      host.hidden = false; document.body.classList.add("modal-open");
+      host.innerHTML = `<div class="mbg" onclick="A.fbClose()"></div>
+        <div class="msheet" role="dialog" aria-modal="true" aria-label="Send feedback">
+          <div class="mhead"><div><h2>Send feedback</h2></div><button class="x" onclick="A.fbClose()" aria-label="Close">×</button></div>
+          <div class="fbbody" id="fbBody">
+            <div class="field">
+              <label>What happened, or what would make the planner better?<textarea id="fbMsg" maxlength="2000" rows="5" required></textarea></label>
+              <label>Your email, only if you'd like a reply<input id="fbEmail" type="email" maxlength="200" autocomplete="email" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+            </div>
+            <p class="hint fberr" id="fbErr" role="alert"></p>
+            <div class="actions"><button class="btn primary" id="fbSend" onclick="A.fbSend()">Send</button><button class="btn" onclick="A.fbClose()">Cancel</button></div>
+            <p class="hint">This goes to the person who made the planner. Please don't include anything private.</p>
+          </div>
+        </div>`;
+      setTimeout(() => { const t = $("#fbMsg"); if (t) t.focus(); }, 50);
+    },
+    fbClose() { if (modal && modal.feedback) { modal = null; renderModal(); } },
+    async fbSend() {
+      const msgEl = $("#fbMsg"), emEl = $("#fbEmail"), err = $("#fbErr"), btn = $("#fbSend");
+      if (!msgEl || !btn || btn.disabled) return;
+      const say = t => { err.textContent = t; };
+      const message = msgEl.value.trim().slice(0, 2000), email = emEl.value.trim().slice(0, 200);
+      if (!message) { say("Please write a note first."); msgEl.focus(); return; }
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { say("That email address does not look right. Fix it or leave it empty."); emEl.focus(); return; }
+      let sent = []; try { sent = (JSON.parse(localStorage.getItem(FB_KEY) || "[]") || []).filter(t => Date.now() - t < FB_WINDOW); } catch (e) { sent = []; }
+      if (sent.length >= FB_MAX) { say("You have sent a few notes already. Please try again in about 10 minutes."); return; }
+      say(""); btn.disabled = true; btn.textContent = "Sending";
+      const ctl = typeof AbortController === "function" ? new AbortController() : null, timer = setTimeout(() => ctl && ctl.abort(), 15000);
+      try {
+        const r = await fetch(`${FB.url}/rest/v1/planner_feedback`, {
+          method: "POST", signal: ctl ? ctl.signal : undefined,
+          headers: { apikey: FB.key, Authorization: `Bearer ${FB.key}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+          // Only the note, the screen name, the app version and the browser type. Never names, answers or location.
+          body: JSON.stringify({ message, email: email || null, screen: String(local.tab || "").slice(0, 40), app_version: APP_VERSION, user_agent: String(navigator.userAgent || "").slice(0, 300) }),
+        });
+        if (!r.ok) throw new Error(r.status);
+        sent.push(Date.now()); try { localStorage.setItem(FB_KEY, JSON.stringify(sent)); } catch (e) { }
+        const body = $("#fbBody"); if (body) body.innerHTML = `<p class="fbthanks">Thanks. Your note was sent.</p><div class="actions"><button class="btn primary" onclick="A.fbClose()">Close</button></div>`;
+      } catch (e) {
+        const b2 = $("#fbSend"), er2 = $("#fbErr");
+        if (b2) { b2.disabled = false; b2.textContent = "Send"; }
+        if (er2) er2.textContent = "It didn't send. Check your connection and try again.";
+      } finally { clearTimeout(timer); }
+    },
     swapTo(id, nid) { modal = null; A.swap(id, nid); renderModal(); },
     findOnMap(id) { if (!D.GEO[id]) return; const had = !!map; focusId = id; local.mapSel = id; local.tab = "map"; persistLocal(); render(); window.scrollTo(0, 0); if (had) setTimeout(() => focusPin(id), 80); },
     mapSel(id) { local.mapSel = id; persistLocal(); render(); if (id && map && D.GEO[id]) { const z = Math.max(map.getZoom(), 17); const pt = map.project(D.GEO[id], z).add([0, 120]); map.flyTo(map.unproject(pt, z), z, { duration: .6 }); } },
@@ -416,6 +469,7 @@
   let modal = null;
   function renderModal() {
     let host = $("#modal"); if (!host) { host = document.createElement("div"); host.id = "modal"; document.body.appendChild(host); }
+    if (modal && modal.feedback) return; // the feedback sheet is not redrawn, so typed text is never lost
     if (!modal) { host.innerHTML = ""; host.hidden = true; document.body.classList.remove("modal-open"); return; }
     const item = ITEMS[modal.id]; const { cands, prev } = swapCandidates(modal.id);
     const f = modal.f || "best";
@@ -549,6 +603,9 @@
       <h2 class="sec">Share with your group</h2>
       ${share}
       ${local.shareMsg ? `<p class="hint">${esc(local.shareMsg)}</p>` : ""}
+      ${FB_ON ? `<h2 class="sec">Feedback</h2>
+      <div class="actions"><button class="btn" onclick="A.fbOpen()">Send feedback</button></div>
+      <p class="hint">Something wrong, or an idea? It goes to the person who made the planner.</p>` : ""}
       <h2 class="sec">Setup</h2>
       <div class="actions"><button class="btn" onclick="A.redoSetup()">Redo setup</button><button class="btn" onclick="A.reset()">Reset the day</button></div>
       <p class="hint">Redo setup asks the questions again and rebuilds the plan. Reset the day keeps the plan and clears every Done and Skip.</p>
