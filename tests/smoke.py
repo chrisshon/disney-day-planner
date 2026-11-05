@@ -1,6 +1,6 @@
 """Smoke test for the Disney Day Planner.
 
-Run:  /Users/chrisshon/dev/AIOS-AAA/.venv/bin/python tests/smoke.py
+Run:  python3 tests/smoke.py   (needs: pip install playwright && playwright install chromium)
 
 Serves this folder on a free port with the same headers vercel.json sends (so the content security
 policy is exercised too), drives the app in a phone-sized browser, and prints one line per check.

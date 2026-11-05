@@ -45,21 +45,3 @@ create policy "pos write" on disney_pos for insert
 create policy "pos update" on disney_pos for update
   using (slug = coalesce(current_setting('request.headers', true)::json ->> 'x-group', ''))
   with check (slug = coalesce(current_setting('request.headers', true)::json ->> 'x-group', ''));
-
--- ---------------------------------------------------------------------------------------------
--- FEEDBACK TABLE (only for the person who makes the planner; families do not need this).
--- Run in the project whose address is in config.js under "feedback". The app can add notes but never read them.
-create table if not exists planner_feedback (
-  id uuid primary key default gen_random_uuid(),
-  message text not null check (length(message) between 1 and 2000),
-  email text check (email is null or length(email) <= 200),
-  screen text check (screen is null or length(screen) <= 40),
-  app_version text check (app_version is null or length(app_version) <= 40),
-  user_agent text check (user_agent is null or length(user_agent) <= 300),
-  created_at timestamptz not null default now()
-);
-alter table planner_feedback enable row level security;
-drop policy if exists "feedback add" on planner_feedback;
-create policy "feedback add" on planner_feedback for insert to anon, authenticated with check (true);
-revoke all on planner_feedback from anon, authenticated;
-grant insert on planner_feedback to anon, authenticated;
