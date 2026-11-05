@@ -186,6 +186,7 @@
   }
 
   /* ---------- sync ---------- */
+  const validProfile = p => { try { window.DDK.checkProfile(p); return !!p && p.v === 1; } catch (e) { return false; } };
   let saveTimer = null;
   function persistLocal() { try { localStorage.setItem("dd-state", JSON.stringify(state)); localStorage.setItem("dd-local", JSON.stringify({ ...local, nowOverride: null })); } catch (e) { } }
   function commit() { state.updatedAt = new Date().toISOString(); persistLocal(); render(); clearTimeout(saveTimer); if (SYNC_ON) saveTimer = setTimeout(push, 400); }
@@ -213,7 +214,7 @@
       // Re-read the server first. If another phone saved since our last confirmed copy, merge before writing so nobody's edit is erased.
       const r0 = force ? { ok: false } : await fetch(`${SB.url}/rest/v1/disney_plan?slug=eq.${SB.slug}&select=state,updated_at`, { headers: { apikey: SB.key, Authorization: `Bearer ${SB.key}` } });
       if (r0.ok) { const rows0 = await r0.json();
-        if (rows0.length && ts(rows0[0].updated_at) > ts(acked ? acked.updatedAt : 0)) {
+        if (rows0.length && rows0[0].state && validProfile(rows0[0].state.profile) && ts(rows0[0].updated_at) > ts(acked ? acked.updatedAt : 0)) {
           const base = acked || blank();
           state = sane({ ...mergeStates(rows0[0].state, base, state), updatedAt: new Date().toISOString() });
           acked = { ...clone(rows0[0].state), updatedAt: rows0[0].updated_at }; persistLocal(); render();
@@ -238,6 +239,7 @@
       const rows = await r.json();
       if (rows.length) {
         const remote = rows[0];
+        if (!remote.state || !validProfile(remote.state.profile)) { local.syncStatus = "offline"; renderSync(); return; } // never run a plan the app cannot read safely
         const pending = acked && JSON.stringify({ ...state, updatedAt: 0 }) !== JSON.stringify({ ...acked, updatedAt: 0 });
         if (!force && remote.state.profile && JSON.stringify(remote.state.profile) !== JSON.stringify(D.PROFILE) && ts(remote.updated_at) > ts(state.updatedAt)) {
           // Someone in the group redid the setup. Adopt their trip details and rebuild this phone's plan.
@@ -336,7 +338,9 @@
 
   /* ---------- rendering ---------- */
   const $ = s => document.querySelector(s);
-  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  // Ids that go inside onclick="..." or value="..." keep only letters, digits, dash and underscore, so nothing can close the attribute or the string.
+  const aid = s => esc(String(s).replace(/[^A-Za-z0-9_-]/g, ""));
   const KIND_ICON = { travel: "🚗", meet: "🤝", ride: "🎢", show: "🎭", meal: "🍽️", break: "😴", task: "📱", treat: "🧁" };
 
   function avatar(p, size = 36) {
@@ -350,7 +354,7 @@
     const cur = state.who[item.id] || item.who;
     return `<div class="who">${D.ALL.map(p => {
       const ok = canRide(p, item); const on = cur.includes(p) && ok;
-      return `<button class="whochip ${on ? "on" : ""} ${ok ? "" : "no"}" ${editable && ok ? `onclick="A.toggleWho('${item.id}','${p}')"` : "disabled"} title="${ok ? "" : "too short for this ride"}">${avatar(p, 40)}<span>${esc(D.PEOPLE[p].name)}</span></button>`;
+      return `<button class="whochip ${on ? "on" : ""} ${ok ? "" : "no"}" ${editable && ok ? `onclick="A.toggleWho('${aid(item.id)}','${aid(p)}')"` : "disabled"} title="${ok ? "" : "too short for this ride"}">${avatar(p, 40)}<span>${esc(D.PEOPLE[p].name)}</span></button>`;
     }).join("")}</div>`;
   }
   const KIND = { ride: "Ride", show: "Show", meet: "Character meet", meal: "Meal", treat: "Treat", break: "Break", travel: "Travel", task: "To do" };
@@ -392,7 +396,7 @@
       .sort((x, y) => x.walk - y.walk || effPriority(y.b) - effPriority(x.b));
     return { cands, prev: prev ? ITEMS[prev.id] : null };
   }
-  const swapOptions = id => swapCandidates(id).cands.map(({ b, walk, gated, effect }) => `<option value="${b.id}" ${gated ? "disabled" : ""}>${esc(b.title)} · ${walk} min walk · ${b.dur} min · ${effect}</option>`).join("");
+  const swapOptions = id => swapCandidates(id).cands.map(({ b, walk, gated, effect }) => `<option value="${aid(b.id)}" ${gated ? "disabled" : ""}>${esc(b.title)} · ${walk} min walk · ${b.dur} min · ${effect}</option>`).join("");
   let modal = null;
   function renderModal() {
     let host = $("#modal"); if (!host) { host = document.createElement("div"); host.id = "modal"; document.body.appendChild(host); }
@@ -413,8 +417,8 @@
     host.innerHTML = `<div class="mbg" onclick="A.closeModal()"></div>
       <div class="msheet" role="dialog" aria-label="Swap ${esc(item.title)}">
         <div class="mhead"><div><p class="eyebrow">Swap this stop</p><h2>${esc(item.title)}</h2><p class="sub">Closest first${prev ? `, walking from ${esc(shortTitle(prev.title))}` : ""}. The chip says what happens to the rest of the day.</p></div><button class="x" onclick="A.closeModal()" aria-label="Close">×</button></div>
-        <div class="mfilters">${SWAP_FILTERS.map(([k, l]) => `<button class="fchip ${f === k ? "on" : ""}" onclick="A.swapFilter('${k}')">${l}</button>`).join("")}<button class="fchip ${modal.all ? "on" : ""}" onclick="A.swapAll()">Everyone can ride</button></div>
-        <div class="mlist">${shown.length ? shown.map(({ b, walk, gated, effect, cls }) => { return `<button class="cand ${cls}" ${gated ? "disabled" : ""} onclick="A.swapTo('${modal.id}','${b.id}')">
+        <div class="mfilters">${SWAP_FILTERS.map(([k, l]) => `<button class="fchip ${f === k ? "on" : ""}" onclick="A.swapFilter('${aid(k)}')">${l}</button>`).join("")}<button class="fchip ${modal.all ? "on" : ""}" onclick="A.swapAll()">Everyone can ride</button></div>
+        <div class="mlist">${shown.length ? shown.map(({ b, walk, gated, effect, cls }) => { return `<button class="cand ${cls}" ${gated ? "disabled" : ""} onclick="A.swapTo('${aid(modal.id)}','${aid(b.id)}')">
             ${artTile(b, "thumb")}
             <span class="ctext"><span class="ctitle">${esc(b.title)}</span><span class="cmeta">${KIND[b.kind] || ""} · ${b.dur} min · ${walk ? `${walk} min walk` : "same land"}${b.minInches ? ` · ${b.minInches}"+` : ""}</span></span>
             <span class="chip ${cls}">${esc(effect)}</span></button>`; }).join("") : `<p class="mempty">${f === "best" ? "Nothing fits cleanly right now. Tap All to see every option." : "Nothing in this group. Tap All."}</p>`}</div>
@@ -426,12 +430,12 @@
 
   function actions(row, item) {
     return `<div class="actions">
-      ${row.done ? `<button class="btn" onclick="A.undo('${row.id}')">Undo</button>` :
-        `<button class="btn primary" onclick="A.done('${row.id}')">Done</button><button class="btn" onclick="A.skip('${row.id}')">Skip</button>`}
-      ${item.ll === true && !row.done ? `<button class="btn" onclick="var v=prompt('Lightning Lane return window, e.g. 2:15-3:15');if(v!=null)A.llReturn('${row.id}',v)">Return time</button>` : ""}
-      ${D.GEO[row.id] ? `<button class="btn quiet" onclick="A.findOnMap('${row.id}')">Map</button>` : ""}<a class="btn quiet" href="${item.link}" target="_blank" rel="noopener">Disney page</a>
-      ${!item.lock && !row.done ? `<button class="btn quiet sm" onclick="A.move('${row.id}',-1)">Earlier</button><button class="btn quiet sm" onclick="A.move('${row.id}',1)">Later</button>${state.pinned[row.id] ? `<button class="btn quiet sm" onclick="A.pin('${row.id}')" title="Tap to let the planner drop this again">Kept ✓</button>` : ""}<button class="btn quiet sm" onclick="A.swapModal('${row.id}')">Swap</button>` : ""}
-      ${!D.PLAN.find(p => p.id === row.id) ? `<button class="btn quiet sm" onclick="A.remove('${row.id}')">Remove</button>` : ""}
+      ${row.done ? `<button class="btn" onclick="A.undo('${aid(row.id)}')">Undo</button>` :
+        `<button class="btn primary" onclick="A.done('${aid(row.id)}')">Done</button><button class="btn" onclick="A.skip('${aid(row.id)}')">Skip</button>`}
+      ${item.ll === true && !row.done ? `<button class="btn" onclick="var v=prompt('Lightning Lane return window, e.g. 2:15-3:15');if(v!=null)A.llReturn('${aid(row.id)}',v)">Return time</button>` : ""}
+      ${D.GEO[row.id] ? `<button class="btn quiet" onclick="A.findOnMap('${aid(row.id)}')">Map</button>` : ""}<a class="btn quiet" href="${item.link}" target="_blank" rel="noopener">Disney page</a>
+      ${!item.lock && !row.done ? `<button class="btn quiet sm" onclick="A.move('${aid(row.id)}',-1)">Earlier</button><button class="btn quiet sm" onclick="A.move('${aid(row.id)}',1)">Later</button>${state.pinned[row.id] ? `<button class="btn quiet sm" onclick="A.pin('${aid(row.id)}')" title="Tap to let the planner drop this again">Kept ✓</button>` : ""}<button class="btn quiet sm" onclick="A.swapModal('${aid(row.id)}')">Swap</button>` : ""}
+      ${!D.PLAN.find(p => p.id === row.id) ? `<button class="btn quiet sm" onclick="A.remove('${aid(row.id)}')">Remove</button>` : ""}
     </div>`;
   }
   function hero(row) {
@@ -471,8 +475,8 @@
       ${cur ? hero(cur) : `<div class="notice">All done. Drive safe.</div>`}
       <div class="late"><span>Running late?</span><button class="btn" onclick="A.late(15)">+15 min</button><button class="btn" onclick="A.late(30)">+30</button><button class="btn" onclick="A.late(60)">+60</button></div>
       ${D.MULTI && nextLL ? `<div class="notice ll">Lightning Lane: when you scan into the current one (or two hours after booking it), book whichever of these has the soonest window: <b>${D.LL_ORDER.filter(id => state.order.includes(id) && state.statuses[id] !== "done" && state.statuses[id] !== "skipped" && !state.llReturn[id]).map(id => esc(shortTitle(ITEMS[id].title))).join(", ")}</b>. Then type the window on that ride with Return time.</div>` : ""}
-      ${next.length ? `<h2 class="sec">Then</h2><div class="list">${next.map(r => `<div class="rowwrap" onclick="A.findOnMap('${r.id}')">${rowHtml(r)}</div>`).join("")}</div>` : ""}
-      ${R.dropped.length ? `<h2 class="sec">Dropped to fit the day</h2>${R.dropped.map(id => poolRow(id, "", `<button class="btn sm" onclick="A.pin('${id}')">Keep it</button>`)).join("")}` : ""}
+      ${next.length ? `<h2 class="sec">Then</h2><div class="list">${next.map(r => `<div class="rowwrap" onclick="A.findOnMap('${aid(r.id)}')">${rowHtml(r)}</div>`).join("")}</div>` : ""}
+      ${R.dropped.length ? `<h2 class="sec">Dropped to fit the day</h2>${R.dropped.map(id => poolRow(id, "", `<button class="btn sm" onclick="A.pin('${aid(id)}')">Keep it</button>`)).join("")}` : ""}
       ${R.missed.length ? `<h2 class="sec">No time slot left</h2>${R.missed.map(id => poolRow(id)).join("")}` : ""}`;
   }
 
@@ -482,12 +486,12 @@
     const skipped = Object.keys(state.statuses).filter(id => state.statuses[id] === "skipped");
     // Finished stops fold away behind a toggle so the day opens on what is left.
     const done = R.rows.filter(r => r.done).sort((a, b) => a.start - b.start);
-    const dayRow = r => `<div class="rowwrap ${local.openRow === r.id ? "open" : ""}" onclick="if(event.target.closest('.dx'))return;A.openRow('${r.id}')">${rowHtml(r, { current: r.id === curId })}<div class="dx" ${local.openRow === r.id ? "" : "hidden"}>${detail(r)}</div></div>`;
+    const dayRow = r => `<div class="rowwrap ${local.openRow === r.id ? "open" : ""}" onclick="if(event.target.closest('.dx'))return;A.openRow('${aid(r.id)}')">${rowHtml(r, { current: r.id === curId })}<div class="dx" ${local.openRow === r.id ? "" : "hidden"}>${detail(r)}</div></div>`;
     return `<p class="hint" style="margin:4px 0 12px">${R.rows.length} stops · out of the park ${exit ? fmt(exit.end - 30) : "n/a"} · home by ${exit ? fmt(exit.end + 60) : "n/a"}. Tap a stop to open it.</p>
       ${done.length ? `<button class="donetoggle" onclick="A.toggleDone()" aria-expanded="${local.showDone ? "true" : "false"}"><span>${done.length} done</span><b>${local.showDone ? "Hide" : "Show"}</b></button>${local.showDone ? `<div class="list donelist">${done.map(dayRow).join("")}</div>` : ""}` : ""}
       <div class="list">${pending.map(dayRow).join("")}</div>
-      ${R.dropped.length || R.missed.length ? `<h2 class="sec">Not scheduled</h2>${R.dropped.map(id => poolRow(id, "dropped to fit the day", `<button class="btn sm" onclick="A.pin('${id}')">Keep it</button>`)).join("")}${R.missed.map(id => poolRow(id, "no time slot left")).join("")}` : ""}
-      ${skipped.length ? `<h2 class="sec">Skipped</h2>${skipped.map(id => poolRow(id, "", `<button class="btn sm" onclick="A.undo('${id}')">Put back</button>`)).join("")}` : ""}`;
+      ${R.dropped.length || R.missed.length ? `<h2 class="sec">Not scheduled</h2>${R.dropped.map(id => poolRow(id, "dropped to fit the day", `<button class="btn sm" onclick="A.pin('${aid(id)}')">Keep it</button>`)).join("")}${R.missed.map(id => poolRow(id, "no time slot left")).join("")}` : ""}
+      ${skipped.length ? `<h2 class="sec">Skipped</h2>${skipped.map(id => poolRow(id, "", `<button class="btn sm" onclick="A.undo('${aid(id)}')">Put back</button>`)).join("")}` : ""}`;
   }
 
   function renderFamily() {
@@ -504,14 +508,14 @@
 
   function renderSettings() {
     const p = state.prefs;
-    const sel = (k, opts) => `<select onchange="A.pref('${k}',this.value)">${opts.map(([v, l]) => `<option value="${v}" ${p[k] == v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
-    const tog = (k, label, hint) => `<label class="tog"><div><span>${label}</span><small>${hint}</small></div><input type="checkbox" ${p[k] ? "checked" : ""} onchange="A.pref('${k}',this.checked)"></label>`;
+    const sel = (k, opts) => `<select onchange="A.pref('${aid(k)}',this.value)">${opts.map(([v, l]) => `<option value="${v}" ${p[k] == v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
+    const tog = (k, label, hint) => `<label class="tog"><div><span>${label}</span><small>${hint}</small></div><input type="checkbox" ${p[k] ? "checked" : ""} onchange="A.pref('${aid(k)}',this.checked)"></label>`;
     const dep = []; for (let m = D.T(14, 0); m <= D.T(22, 30); m += 30) dep.push([m, fmt(m)]);
     const pool = D.BONUS.filter(b => !state.order.includes(b.id));
     const times = []; for (let m = D.T(7, 0); m <= D.T(21, 0); m += 30) times.push([m, fmt(m)]);
     const hasNap = D.PLAN.some(x => x.id === "nap");
     const hts = []; for (let h = 28; h <= 66; h++) hts.push(h);
-    const heights = D.KIDS.map(k => `<div class="pref"><span>${esc(D.PEOPLE[k].name)}<small class="sm">${D.PEOPLE[k].estimated && !(p.heights && p.heights[k]) ? "estimated from age, measure before you go" : "inches"}</small></span><select onchange="A.height('${k}',this.value)">${hts.map(h => `<option value="${h}" ${inches(k) == h ? "selected" : ""}>${h} in</option>`).join("")}</select></div>`).join("");
+    const heights = D.KIDS.map(k => `<div class="pref"><span>${esc(D.PEOPLE[k].name)}<small class="sm">${D.PEOPLE[k].estimated && !(p.heights && p.heights[k]) ? "estimated from age, measure before you go" : "inches"}</small></span><select onchange="A.height('${aid(k)}',this.value)">${hts.map(h => `<option value="${h}" ${inches(k) == h ? "selected" : ""}>${h} in</option>`).join("")}</select></div>`).join("");
     const cfgShare = CFG.sharing && CFG.sharing.url && CFG.sharing.key;
     const share = SYNC_ON
       ? `<p class="hint">Sharing is on. Everyone who opens the invite link sees the same plan, and adults can share their spot on the Map tab. Status: <b>${esc(local.syncStatus)}</b>.</p>
@@ -525,7 +529,7 @@
       ${hasNap ? tog("napOn", "Nap or quiet break", "A rest stop in the middle of the day") : ""}
       ${D.KIDS.length ? `<h2 class="sec">Heights</h2>${heights}<p class="hint">Rides with a height limit use these numbers. Update them after you measure.</p>` : ""}
       <h2 class="sec">Add a stop</h2>
-      ${pool.map(b => `<div class="pool"><span>${esc(b.title)}<small>${b.minInches ? b.minInches + '" · ' : ""}${b.dur} min</small></span><button class="btn sm" onclick="A.add('${b.id}')" ${noOneTall(b) ? "disabled title='nobody is tall enough'" : ""}>Add</button></div>`).join("") || "<p class='hint'>Everything is in the plan.</p>"}
+      ${pool.map(b => `<div class="pool"><span>${esc(b.title)}<small>${b.minInches ? b.minInches + '" · ' : ""}${b.dur} min</small></span><button class="btn sm" onclick="A.add('${aid(b.id)}')" ${noOneTall(b) ? "disabled title='nobody is tall enough'" : ""}>Add</button></div>`).join("") || "<p class='hint'>Everything is in the plan.</p>"}
       <h2 class="sec">Share with your group</h2>
       ${share}
       ${local.shareMsg ? `<p class="hint">${esc(local.shareMsg)}</p>` : ""}
@@ -733,13 +737,13 @@
   function sheetGhost(R, item) {
     const land = D.LANDS[item.land];
     const gated = noOneTall(item);
-    const opts = R.rows.filter(r => !r.done && !ITEMS[r.id].lock && r.id !== item.id).map(r => `<option value="${r.id}">${fmt(r.start)} · ${esc(ITEMS[r.id].title)}</option>`).join("");
+    const opts = R.rows.filter(r => !r.done && !ITEMS[r.id].lock && r.id !== item.id).map(r => `<option value="${aid(r.id)}">${fmt(r.start)} · ${esc(ITEMS[r.id].title)}</option>`).join("");
     return `<div class="sh"><button class="x" onclick="A.mapSel(null)" aria-label="Close">×</button>
       ${artTile(item, "thumb")}
       <div><p class="when">Not in the plan</p><h3>${esc(item.title)}</h3><p class="sub">${kindTag(item)}<span>${esc(land.name)} · ${item.dur} min</span>${item.minInches ? `<span class="tag">${item.minInches}"+</span>` : ""}</p></div></div>
       <p class="note">${esc(item.note || "")}${gated ? " Nobody in the group is tall enough for this one." : ""}</p>
-      <div class="actions"><button class="btn primary" onclick="A.add('${item.id}')" ${gated ? "disabled" : ""}>Add to the day</button>
-      <select class="swap" ${gated ? "disabled" : ""} onchange="if(this.value)A.swap(this.value,'${item.id}')"><option value="">Swap it in for…</option>${opts}</select></div>`;
+      <div class="actions"><button class="btn primary" onclick="A.add('${aid(item.id)}')" ${gated ? "disabled" : ""}>Add to the day</button>
+      <select class="swap" ${gated ? "disabled" : ""} onchange="if(this.value)A.swap(this.value,'${aid(item.id)}')"><option value="">Swap it in for…</option>${opts}</select></div>`;
   }
   function renderMap(R) {
     if (!map) {

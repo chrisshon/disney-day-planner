@@ -21,15 +21,35 @@
 
   K.estimateInches = age => HEIGHT_BY_AGE[Math.max(0, Math.min(HEIGHT_BY_AGE.length - 1, age == null ? 8 : age))];
 
+  /* Stops a saved or shared profile from carrying anything the app cannot safely run. Person ids end up inside page code, so they must look like p1, p2, p3. */
+  K.checkProfile = function (p) {
+    if (!p || typeof p !== "object" || !Array.isArray(p.people) || p.people.length > 12) throw new Error("The saved answers could not be read.");
+    const seen = Object.create(null);
+    p.people.forEach(x => {
+      if (!x || typeof x !== "object") throw new Error("The saved answers could not be read.");
+      if (x.name != null && typeof x.name !== "string") throw new Error("The saved answers could not be read.");
+      if (x.id != null && x.id !== "") {
+        if (typeof x.id !== "string" || !/^p\d+$/.test(x.id)) throw new Error("A person in the saved answers has an invalid id.");
+        if (seen[x.id]) throw new Error("Two people in the saved answers share an id.");
+        seen[x.id] = 1;
+      }
+    });
+  };
+
   K.build = function (profile) {
-    const P = Object.assign(K.defaultProfile(), profile);
+    K.checkProfile(profile);
+    const def = K.defaultProfile();
+    const P = Object.assign(def, profile);
+    P.nap = Object.assign(K.defaultProfile().nap, profile.nap || {}); // fields added later to nap or occasion fill in for older saved answers
+    P.occasion = Object.assign(K.defaultProfile().occasion, profile.occasion || {});
     const people = P.people.filter(p => p.name && p.name.trim());
     if (!people.some(p => !p.kid)) throw new Error("At least one adult is needed.");
 
     /* ---- people ---- */
-    const PEOPLE = {}; const ALL = []; const used = {};
+    const PEOPLE = Object.create(null); const ALL = []; const used = {};
+    const taken = new Set(people.map(p => p.id).filter(Boolean));
     people.forEach((p, i) => {
-      const id = p.id || "p" + (i + 1); ALL.push(id);
+      let id = p.id; if (!id) { let n = i + 1; while (taken.has("p" + n)) n++; id = "p" + n; taken.add(id); } ALL.push(id);
       const name = p.name.trim();
       let short = name[0].toUpperCase(); if (used[short]) short = name.slice(0, 2); used[short] = 1;
       PEOPLE[id] = { name, short, color: PALETTE[i % PALETTE.length], role: p.kid ? "kid" : "adult",
