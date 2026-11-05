@@ -70,6 +70,16 @@ Be aware of how this is protected. Each group gets a long random code, and the a
 
 If you turned on sharing before this protection existed, open the SQL Editor and run the current `schema.sql` once more. It replaces the old open rules.
 
+## Live wait times
+
+On the day of your visit, the app shows how long each line is right now. Each ride gets a small tag such as "35 min wait", "Down right now" or "Closed today", and Lightning Lane rides show the next return time. A ride that is down or closed also gets a note suggesting Later or Skip. Nothing is skipped for you.
+
+The planner uses the live standby wait, instead of its usual guess, for rides that start in the next two hours and are not on Lightning Lane. So the plan shifts when a line is long or short. Anything without a live wait keeps the usual plan.
+
+The numbers come from [ThemeParks.wiki](https://themeparks.wiki), a free service, and the app credits it in Settings and under the plan. The app asks for them at most every two minutes, only while the page is open on screen, and only on the date you set for the visit. Before that day, or if the service cannot be reached, you see nothing and the plan is unchanged. Waits older than 15 minutes are ignored. Turn this off any time in **Settings, then Live wait times**.
+
+Disney does not provide these numbers, so they can be wrong or late. Check the official Disneyland app before you commit to a line.
+
 ## Maps and rights
 
 - The **Park** map is Disney's own illustrated map. The app loads it from Disney's servers while you browse. Nothing from Disney is stored in this project. It is unofficial, so Disney could change or block it at any time. If the tiles stop loading, the app switches to the free street map by itself.
@@ -87,6 +97,7 @@ Ride height limits and details in `catalog.js` are from general knowledge and ch
 | `setup.js` | The five setup questions |
 | `catalog.js` | The park's rides, shows, food stops and walking times |
 | `planner.js` | Turns your answers plus the catalog into a plan |
+| `waits.js` | Fetches live ride waits on the day of the visit (ThemeParks.wiki) |
 | `app.js` | The schedule engine, the tabs, the map and group sharing |
 | `intro.js` | The opening animation |
 | `main.js` | Decides whether to show setup or the plan |

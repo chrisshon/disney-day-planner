@@ -24,6 +24,7 @@ Keep every message plain. The user is probably not a developer.
 - `catalog.js` holds park data: `LANDS`, walking minutes (`WALK`), and `CATALOG` (each ride, show, meet, meal, break with land, duration, priority, `minInches`, `ll` for Lightning Lane, `window` for open hours).
 - `planner.js`: `DDK.build(profile)` returns the day (`PLAN`, `BONUS`, `PEOPLE`, `START`, `GEO`...). Fixed stops (gate, meals, nap, exit) are added here. Must-dos get priority 5.
 - `app.js` is the schedule engine (`compute`, `place`, `run`) plus the UI. It reads `window.DD`, which `main.js` sets from the saved profile before loading `app.js`.
+- `waits.js` fetches live ride waits from ThemeParks.wiki, on the visit day only. `app.js` shows them as chips and `liveDur` swaps them in for the catalog length of standby rides starting in the next 2 hours. The credit link is required wherever waits show. Its host is in the `connect-src` of `vercel.json`.
 - `setup.js` is the onboarding. `main.js` decides setup versus plan, and handles `#join=` invite links.
 - State lives in local storage: `dd-profile` (setup answers), `dd-state` (done and skipped marks, order), `dd-local` (current tab, map style), `dd-sync` (optional sharing settings), `dd-intro` (animation throttle).
 
