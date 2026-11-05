@@ -543,6 +543,8 @@
   /* ---------- map ---------- */
   let map = null, pinLayer, routeLayer, labelLayer, meLayer, famLayer, pins = {}, locOn = false, locFirst = false, locFly = false, focusId = null, heading = null, shown = null, compassOn = false, compassListening = false, compassMsg = "", mapMsg = "", myPos = null, lastPosPush = 0, famPos = {};
   let parkLayer, streetLayer, attrib, baseMode = null, baseSwitching = 0, parkOk = 0, parkErr = 0;
+  const HAS_MAP = () => !!(window.L && window.L.map); // the map library comes from a CDN and may not load
+  const RETINA = !!(window.L && L.Browser && L.Browser.retina);
   const BLANK = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
   /*
     Two map styles:
@@ -552,7 +554,7 @@
   */
   const PARK_URL = CFG.parkMapUrl || "https://cdn6.parksmedia.wdprapps.disney.com/media/maps/prod/disneyland/671203034/{z}/{x}/{y}.jpg";
   const BASES = {
-    park: { url: PARK_URL, opts: { detectRetina: true, maxNativeZoom: L.Browser.retina ? 19 : 20, maxZoom: 21, minZoom: 14, errorTileUrl: BLANK, pane: "park", keepBuffer: 3 }, credit: "Map art: Disney (loaded from Disney)" },
+    park: { url: PARK_URL, opts: { detectRetina: true, maxNativeZoom: RETINA ? 19 : 20, maxZoom: 21, minZoom: 14, errorTileUrl: BLANK, pane: "park", keepBuffer: 3 }, credit: "Map art: Disney (loaded from Disney)" },
     street: { url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", opts: { maxNativeZoom: 19, maxZoom: 21, pane: "street", keepBuffer: 2, attribution: "" }, credit: "&copy; OpenStreetMap contributors" },
   };
   /* walkway routing: window.PATHS = { n: [[lat,lon],...], e: [[i,j],...] } from paths.js (OpenStreetMap footways) */
@@ -790,9 +792,9 @@
     const row = sel && R.rows.find(r => r.id === sel);
     const walk = R.rows.reduce((a, r) => a + (r.walk || 0), 0);
     const sh = $("#sheet"); sh.classList.toggle("open", !!sel);
-    const who = !SYNC_ON ? "" : `<select class="meSel" onchange="A.me(this.value)"><option value="">Which phone is this?</option>${D.ADULTS.map(p => `<option value="${p}" ${local.me === p ? "selected" : ""}>${esc(D.PEOPLE[p].name)}</option>`).join("")}</select>`;
+    const who = !SYNC_ON ? "" : `<select class="meSel" onchange="A.me(this.value)"><option value="">Which phone is this?</option>${D.ADULTS.map(p => `<option value="${esc(p)}" ${local.me === p ? "selected" : ""}>${esc(D.PEOPLE[p].name)}</option>`).join("")}</select>`;
     sh.innerHTML = !sel ? `<div class="strip"><span><b>${rows.length}</b> stops</span><span><b>${walk}</b> min walking</span><span>Tap a pin</span></div>
-        ${SYNC_ON ? `<div class="mehost">${local.me ? `<span>Sharing as <b>${esc(D.PEOPLE[local.me].name)}</b></span>` : `<span>Share your spot with the group</span>`}${who}</div>` : ""}
+        ${SYNC_ON ? `<div class="mehost">${local.me && D.PEOPLE[local.me] ? `<span>Sharing as <b>${esc(D.PEOPLE[local.me].name)}</b></span>` : `<span>Share your spot with the group</span>`}${who}</div>` : ""}
         ${mapMsg ? `<p class="hint">${esc(mapMsg)}</p>` : ""}
         ${!compassOn ? `<button class="btn primary dirbtn" onclick="A.compass()">Show which way I'm facing</button>` : ""}${compassMsg ? `<p class="hint">${esc(compassMsg)}</p>` : ""}`
       : row ? sheetRow(R, row, ITEMS[sel], curId) : sheetGhost(R, ITEMS[sel]);
@@ -804,10 +806,12 @@
     const pending = R.rows.filter(r => !r.done);
     $("#clock").textContent = fmt(nowM);
     const views = { now: renderNow, day: renderDay, family: renderFamily, settings: renderSettings };
-    const isMap = local.tab === "map";
+    const isMap = local.tab === "map" && HAS_MAP();
     document.body.classList.toggle("maptab", isMap);
     $("#mapwrap").hidden = !isMap;
-    if (isMap) renderMap(R); else $("#view").innerHTML = (views[local.tab] || renderNow)(R);
+    if (isMap) renderMap(R);
+    else if (local.tab === "map") $("#view").innerHTML = `<div class="notice">The map could not load. Check your connection and refresh the page. Your plan still works on the other tabs.</div>`;
+    else $("#view").innerHTML = (views[local.tab] || renderNow)(R);
     document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === local.tab));
     renderSync();
   }
