@@ -22,12 +22,27 @@
     const cached = localStorage.getItem("dd-state"); if (cached) state = { ...blank(), ...JSON.parse(cached) };
     const l = localStorage.getItem("dd-local"); if (l) local = { ...local, ...JSON.parse(l) };
   } catch (e) { /* storage unavailable */ }
+  local.nowOverride = null; // "Pretend it is" is a one-session test, never kept between visits
 
-  const ITEMS = {}; D.PLAN.concat(D.BONUS).forEach(i => ITEMS[i.id] = i);
+  const ITEMS = Object.create(null); D.PLAN.concat(D.BONUS).forEach(i => ITEMS[i.id] = i); // no prototype, so an id like "constructor" in shared state is not a stop
+
+  /* Make saved or shared state safe to run: fill in missing settings, force numbers, and drop stops this version does not have. */
+  function sane(s) {
+    const o = s && typeof s === "object" ? s : {};
+    const out = { ...blank(), ...o };
+    const pf = o.prefs && typeof o.prefs === "object" ? o.prefs : {};
+    out.prefs = { ...D.DEFAULT_PREFS, ...pf, heights: pf.heights && typeof pf.heights === "object" ? pf.heights : {} };
+    const dep = Number(out.prefs.departure); out.prefs.departure = isFinite(dep) && dep > 0 ? dep : D.DEFAULT_PREFS.departure;
+    ["statuses", "doneAt", "who", "pinned", "llReturn"].forEach(k => { if (!out[k] || typeof out[k] !== "object" || Array.isArray(out[k])) out[k] = {}; });
+    out.order = (Array.isArray(out.order) ? out.order : D.PLAN.map(p => p.id)).filter(id => typeof id === "string" && ITEMS[id]);
+    return out;
+  }
+  state = sane(state);
+  if (local.me && !D.PEOPLE[local.me]) local.me = null; // that person is no longer in the group
 
   /* ---------- time ---------- */
   const pad = n => String(n).padStart(2, "0");
-  const fmt = m => { if (m == null || !isFinite(m)) return "—"; let h = Math.floor(m / 60) % 24, mm = Math.round(m % 60); const ap = h >= 12 ? "pm" : "am"; h = h % 12 || 12; return `${h}:${pad(mm)} ${ap}`; };
+  const fmt = m => { if (m == null || !isFinite(m)) return "n/a"; let h = Math.floor(m / 60) % 24, mm = Math.round(m % 60); const ap = h >= 12 ? "pm" : "am"; h = h % 12 || 12; return `${h}:${pad(mm)} ${ap}`; };
   const isTheDay = () => { const n = new Date(); return `${n.getFullYear()}-${pad(n.getMonth() + 1)}-${pad(n.getDate())}` === DAY; };
   const dateLabel = () => { const [y, m, d] = DAY.split("-").map(Number); return new Date(y, m - 1, d).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" }); };
   const realNow = () => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); };
@@ -72,9 +87,9 @@
 
   // "2:15-3:15", "2:15 pm - 3:15 pm", "12:40-1:40" -> minutes from midnight. Bare hours 1 to 7 are afternoon.
   function parseWin(s) {
-    const h = (hh, mm, ap) => { let x = +hh % 12; if (ap ? ap.toLowerCase() === "p" : +hh < 8) x += 12; return x * 60 + (+mm || 0); };
+    const h = (hh, mm, ap) => { let x = +hh % 12; if (ap ? ap.toLowerCase() === "p" : (+hh === 12 || +hh < 8)) x += 12; return x * 60 + (+mm || 0); }; // no am/pm: 12 is noon, 1 to 7 are afternoon, 8 to 11 are morning
     const m = /(\d{1,2})(?::(\d{2}))?\s*([ap])?\.?m?\.?\s*(?:-|–|to)\s*(\d{1,2})(?::(\d{2}))?\s*([ap])?\.?m?\.?/i.exec(s || "");
-    if (m) { const a = h(m[1], m[2], m[3] || m[6]), b = h(m[4], m[5], m[6] || m[3]); return b > a ? [a, b] : null; }
+    if (m) { let a = h(m[1], m[2], m[3] || m[6]); const b = h(m[4], m[5], m[6] || m[3]); if (!(b > a) && !m[3]) a = h(m[1], m[2]); /* "11:30-12:30 pm" starts in the morning */ return b > a ? [a, b] : null; }
     const one = /(\d{1,2})(?::(\d{2}))?\s*([ap])?\.?m?\.?/i.exec(s || ""); // a single time: Disney windows are one hour
     if (one) { const a = h(one[1], one[2], one[3]); return [a, a + 60]; }
     return null;
@@ -172,7 +187,7 @@
 
   /* ---------- sync ---------- */
   let saveTimer = null;
-  function persistLocal() { try { localStorage.setItem("dd-state", JSON.stringify(state)); localStorage.setItem("dd-local", JSON.stringify(local)); } catch (e) { } }
+  function persistLocal() { try { localStorage.setItem("dd-state", JSON.stringify(state)); localStorage.setItem("dd-local", JSON.stringify({ ...local, nowOverride: null })); } catch (e) { } }
   function commit() { state.updatedAt = new Date().toISOString(); persistLocal(); render(); clearTimeout(saveTimer); if (SYNC_ON) saveTimer = setTimeout(push, 400); }
   let acked = null; // the plan as the server last confirmed it, so edits from two phones can be merged
   const clone = o => JSON.parse(JSON.stringify(o));
@@ -200,7 +215,7 @@
       if (r0.ok) { const rows0 = await r0.json();
         if (rows0.length && ts(rows0[0].updated_at) > ts(acked ? acked.updatedAt : 0)) {
           const base = acked || blank();
-          state = { ...blank(), ...mergeStates(rows0[0].state, base, state), updatedAt: new Date().toISOString() };
+          state = sane({ ...mergeStates(rows0[0].state, base, state), updatedAt: new Date().toISOString() });
           acked = { ...clone(rows0[0].state), updatedAt: rows0[0].updated_at }; persistLocal(); render();
         } }
     } catch (e) { }
@@ -232,10 +247,10 @@
         if (!state.updatedAt || ts(remote.updated_at) > ts(state.updatedAt)) {
           if (pending) {
             // Another phone saved while this one had unsaved edits: keep both.
-            state = { ...blank(), ...mergeStates(remote.state, acked, state), updatedAt: new Date().toISOString() };
+            state = sane({ ...mergeStates(remote.state, acked, state), updatedAt: new Date().toISOString() });
             acked = clone(remote.state); persistLocal(); render(); push(); return;
           }
-          state = { ...blank(), ...remote.state, updatedAt: remote.updated_at }; acked = clone(state); persistLocal(); render();
+          state = sane({ ...remote.state, updatedAt: remote.updated_at }); acked = clone(state); persistLocal(); render();
           local.syncStatus = "synced";
         } else if (ts(remote.updated_at) < ts(state.updatedAt)) { push(); return; }
         else { if (!acked) acked = clone(state); local.syncStatus = "synced"; }
@@ -277,11 +292,11 @@
       // Hop over locked stops (lunch, dinner) instead of stopping at them; never past the gate or the exit.
       const o = state.order, i = o.indexOf(id); if (i < 0) return;
       let j = i + dir, k = 0;
-      while (j >= 0 && j < o.length && ITEMS[o[j]].lock && ITEMS[o[j]].kind !== "travel") { j += dir; k++; }
-      if (j < 0 || j >= o.length || ITEMS[o[j]].lock) return;
+      while (j >= 0 && j < o.length && ITEMS[o[j]] && ITEMS[o[j]].lock && ITEMS[o[j]].kind !== "travel") { j += dir; k++; }
+      if (j < 0 || j >= o.length || !ITEMS[o[j]] || ITEMS[o[j]].lock) return;
       o.splice(i, 1); o.splice(i + dir * Math.max(1, k), 0, id); commit(); // lands just past the locked run, or swaps with the neighbour
     },
-    pref(k, v) { state.prefs[k] = v; commit(); },
+    pref(k, v) { state.prefs[k] = k === "departure" ? +v : v; commit(); },
     llReturn(id, v) { state.llReturn[id] = v; commit(); },
     height(id, v) { state.prefs.heights = { ...(state.prefs.heights || {}), [id]: +v }; commit(); },
     reset() { if (!confirm(SYNC_ON ? "Reset the whole day for everyone in the group?" : "Reset the day? All Done and Skip marks are cleared.")) return; state = blank(); commit(); },
@@ -468,7 +483,7 @@
     // Finished stops fold away behind a toggle so the day opens on what is left.
     const done = R.rows.filter(r => r.done).sort((a, b) => a.start - b.start);
     const dayRow = r => `<div class="rowwrap ${local.openRow === r.id ? "open" : ""}" onclick="if(event.target.closest('.dx'))return;A.openRow('${r.id}')">${rowHtml(r, { current: r.id === curId })}<div class="dx" ${local.openRow === r.id ? "" : "hidden"}>${detail(r)}</div></div>`;
-    return `<p class="hint" style="margin:4px 0 12px">${R.rows.length} stops · out of the park ${exit ? fmt(exit.end - 30) : "—"} · home by ${exit ? fmt(exit.end + 60) : "—"}. Tap a stop to open it.</p>
+    return `<p class="hint" style="margin:4px 0 12px">${R.rows.length} stops · out of the park ${exit ? fmt(exit.end - 30) : "n/a"} · home by ${exit ? fmt(exit.end + 60) : "n/a"}. Tap a stop to open it.</p>
       ${done.length ? `<button class="donetoggle" onclick="A.toggleDone()" aria-expanded="${local.showDone ? "true" : "false"}"><span>${done.length} done</span><b>${local.showDone ? "Hide" : "Show"}</b></button>${local.showDone ? `<div class="list donelist">${done.map(dayRow).join("")}</div>` : ""}` : ""}
       <div class="list">${pending.map(dayRow).join("")}</div>
       ${R.dropped.length || R.missed.length ? `<h2 class="sec">Not scheduled</h2>${R.dropped.map(id => poolRow(id, "dropped to fit the day", `<button class="btn sm" onclick="A.pin('${id}')">Keep it</button>`)).join("")}${R.missed.map(id => poolRow(id, "no time slot left")).join("")}` : ""}
@@ -802,7 +817,7 @@
     pull(); pullPos();
     if (SYNC_ON) { setInterval(pull, 5000); setInterval(pullPos, 10000); setInterval(pushPos, 10000); }
     // Skip the minute refresh while someone is typing, so a half-typed answer is not wiped.
-    setInterval(() => { const a = document.activeElement; if (document.visibilityState === "visible" && !(a && /^(INPUT|TEXTAREA)$/.test(a.tagName))) render(); }, 60000);
+    setInterval(() => { const a = document.activeElement; if (document.visibilityState === "visible" && !(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) render(); }, 60000);
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { pull(); pullPos(); relocate(); render(); } });
   };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
