@@ -1,11 +1,11 @@
 # Disney Day Planner
 
-A static, no-build web app (vanilla JS, Leaflet from a CDN) that plans one day at Disneyland Park. Fan-made, not affiliated with Disney. Serve with `python3 -m http.server 8000`.
+A static, no-build web app (vanilla JS, Leaflet from a CDN) that plans one day at the Disneyland Resort: Disneyland Park, Disney California Adventure Park, or a Park Hopper day that moves from one to the other. Fan-made, not affiliated with Disney. Serve with `python3 -m http.server 8000`.
 
 ## When the user says "set up my day"
 
 1. Ask, in plain English, one short group at a time:
-   - Park (only Disneyland Park is built in) and visit date.
+   - Park (`disneyland` or `dca`), whether they are park hopping to the other one (and roughly when, or let the planner choose), and visit date.
    - Who is coming: first names, which are children, children's ages, and heights if known.
    - Arrival time and when they want to be out of the park.
    - Nap or quiet break (yes or no, earliest start, length), and lunch and dinner times.
@@ -21,17 +21,17 @@ Keep every message plain. The user is probably not a developer.
 
 ## How the code fits together
 
-- `catalog.js` holds park data: `LANDS`, walking minutes (`WALK`), and `CATALOG` (each ride, show, meet, meal, break with land, duration, priority, `minInches`, `ll` for Lightning Lane, `window` for open hours).
-- `planner.js`: `DDK.build(profile)` returns the day (`PLAN`, `BONUS`, `PEOPLE`, `START`, `GEO`...). Fixed stops (gate, meals, nap, exit) are added here. Must-dos get priority 5.
+- `catalog.js` holds park data for both parks: `LANDS` (each with its `park`), walking minutes (`WALK`, one graph for the resort; the two gates are joined by one Esplanade edge), `PARKS` (gate, tour order, live feed id and fixed-stop pins per park), and `CATALOG` (each ride, show, meet, meal, break with land, duration, priority, `minInches`, `ll` for Lightning Lane, `window` for open hours).
+- `planner.js`: `DDK.build(profile)` returns the day (`PLAN`, `BONUS`, `PEOPLE`, `START`, `GEO`...). Fixed stops (gate, meals, nap, exit, and the `hop` stop on a hopping day) are added here, worded per park in `FIXED`. Must-dos get priority 5. On a hopping day, stops before the hop are all in the first park and stops after it in the second; `profile.hop` is `{ to, at }` (`at: null` lets the planner split the day by the stops picked).
 - `app.js` is the schedule engine (`compute`, `place`, `run`) plus the UI. It reads `window.DD`, which `main.js` sets from the saved profile before loading `app.js`.
-- `waits.js` fetches live ride waits from ThemeParks.wiki, on the visit day only. `app.js` shows them as chips and `liveDur` swaps them in for the catalog length of standby rides starting in the next 2 hours. The credit link is required wherever waits show. Its host is in the `connect-src` of `vercel.json`.
+- `waits.js` fetches live ride waits from ThemeParks.wiki, on the visit day only, one feed per park in the day. `app.js` shows them as chips and `liveDur` swaps them in for the catalog length of standby rides starting in the next 2 hours. The credit link is required wherever waits show. Its host is in the `connect-src` of `vercel.json`.
 - `setup.js` is the onboarding. `main.js` decides setup versus plan, and handles `#join=` invite links.
 - State lives in local storage: `dd-profile` (setup answers), `dd-state` (done and skipped marks, order), `dd-local` (current tab, map style), `dd-sync` (optional sharing settings), `dd-intro` (animation throttle).
 
 ## Changing things
 
-- Add a ride or stop: add an object to `CATALOG` in `catalog.js` with a unique `id`, `land` key from `LANDS`, and a `link` if useful. Walking times come from the land, so no extra data is needed. Confirm the ride's height limit from the official Disneyland site, not memory.
-- A new park is a new `catalog.js` plus map coordinates in `GEO` and `LAND_GEO` and a walkway file like `paths.js`. Say plainly that this is a larger job.
+- Add a ride or stop: add an object to `CATALOG` in `catalog.js` with a unique `id`, `land` key from `LANDS`, and a `link` if useful. Walking times come from the land, so no extra data is needed. Confirm the ride's height limit from the official Disneyland site, not memory. Add its ThemeParks.wiki id to `waits.js` and its pin to `GEO`.
+- A new park is new `LANDS` with a `park` key, a `PARKS` entry, `FIXED` stops in `planner.js`, catalog entries, pins in `GEO` and `LAND_GEO`, live ids in `waits.js`, and its walkways added to `paths.js`. Say plainly that this is a larger job. Walt Disney World is not built; its parks are linked by buses and monorail, not a walk, and its Lightning Lane rules differ.
 - Change the setup questions in `setup.js`, and add any new field to `defaultProfile()` in `planner.js` so old saved profiles still load.
 
 ## Rules for this project

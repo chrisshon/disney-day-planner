@@ -87,7 +87,9 @@
     document.title = (D.GROUP ? D.GROUP + " " : "") + "Disney day";
     const [y, m, d] = D.DAY.split("-").map(Number);
     const dl = new Date(y, m - 1, d).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
-    document.getElementById("eyebrow").textContent = "Disneyland Park · " + dl;
+    const label = D.PARK_LABEL || "Disneyland Park";
+    document.getElementById("eyebrow").textContent = label + " · " + dl;
+    const mt = document.querySelector(".maptitle .eyebrow"); if (mt) mt.textContent = D.SECOND ? "Disneyland Resort" : label; // the short name fits beside the map buttons
     document.getElementById("heading").innerHTML = (D.GROUP ? D.GROUP.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])) + " " : "Your ") + "<em>day</em>";
     try { await loadApp(); } catch (e) { showNote("Something did not load", "Refresh the page. If it keeps happening, check your connection.", true); return; }
     window.DDIntro.run(D);

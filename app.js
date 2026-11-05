@@ -34,6 +34,9 @@
   local.nowOverride = null; // "Pretend it is" is a one-session test, never kept between visits
 
   const ITEMS = Object.create(null); D.PLAN.concat(D.BONUS).forEach(i => ITEMS[i.id] = i); // no prototype, so an id like "constructor" in shared state is not a stop
+  const HOPPING = !!D.SECOND;
+  const parkOfId = id => (ITEMS[id] && D.parkOf ? D.parkOf(ITEMS[id].land) : D.FIRST);
+  const parkShort = id => (D.PARK_INFO && D.PARK_INFO[parkOfId(id)] ? D.PARK_INFO[parkOfId(id)].short : "");
 
   /* Make saved or shared state safe to run: fill in missing settings, force numbers, and drop stops this version does not have. */
   function sane(s) {
@@ -52,7 +55,7 @@
   /* ---------- time ---------- */
   const pad = n => String(n).padStart(2, "0");
   const fmt = m => { if (m == null || !isFinite(m)) return "n/a"; let h = Math.floor(m / 60) % 24, mm = Math.round(m % 60); const ap = h >= 12 ? "pm" : "am"; h = h % 12 || 12; return `${h}:${pad(mm)} ${ap}`; };
-  const isTheDay = () => D.parkNow().date === DAY; // park time (Anaheim), not the phone's timezone
+  const isTheDay = () => D.parkNow().date === DAY; // park time (Anaheim, both parks), not the phone's timezone
   const dateLabel = () => { const [y, m, d] = DAY.split("-").map(Number); return new Date(y, m - 1, d).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" }); };
   const realNow = () => D.parkNow().minutes;
   const now = () => local.nowOverride != null ? local.nowOverride : (isTheDay() ? realNow() : D.START - 15);
@@ -146,7 +149,7 @@
   }
   function run(ids, nowM) {
     const rows = []; const missed = [];
-    let t = 0, curLand = "car";
+    let t = 0, curLand = D.START_LAND || "car"; // the first park's gate
     // done items keep their recorded times
     let lastDoneEnd = null;
     ids.forEach(id => {
@@ -320,7 +323,16 @@
     late(mins) { state.holdUntil = now() + mins; commit(); },
     clearHold() { state.holdUntil = null; commit(); },
     toggleWho(id, p) { const item = ITEMS[id]; let w = (state.who[id] || item.who).slice(); w = w.includes(p) ? w.filter(x => x !== p) : w.concat([p]); state.who[id] = w; commit(); },
-    add(id, afterId) { if (!state.order.includes(id)) { const i = afterId ? state.order.indexOf(afterId) + 1 : state.order.indexOf("dinner"); state.order.splice(i, 0, id); } delete state.statuses[id]; commit(); },
+    add(id, afterId) {
+      if (!state.order.includes(id)) {
+        let i = afterId ? state.order.indexOf(afterId) + 1 : state.order.indexOf("dinner");
+        // On a hopping day, a new stop goes into the part of the day spent in its own park.
+        const h = state.order.indexOf("hop");
+        if (!afterId && h >= 0 && ITEMS.dinner && parkOfId(id) !== parkOfId("dinner")) i = parkOfId(id) === D.FIRST ? h : state.order.indexOf("lastlook");
+        state.order.splice(i, 0, id);
+      }
+      delete state.statuses[id]; commit();
+    },
     remove(id) { state.order = state.order.filter(x => x !== id); delete state.statuses[id]; commit(); },
     pin(id) { state.pinned[id] = !state.pinned[id]; commit(); },
     swap(id, nid) {
@@ -475,7 +487,7 @@
     const rows = R.rows.filter(r => r.id !== "exit"), idx = rows.findIndex(r => r.id === id);
     const prev = idx > 0 ? rows[idx - 1] : null, prevLand = prev ? (ITEMS[prev.id].endLand || ITEMS[prev.id].land) : ITEMS[id].land;
     const exit0 = R.rows.find(r => r.id === "exit"), end0 = exit0 ? exit0.end : 0;
-    const cands = D.BONUS.concat(D.PLAN).filter(b => b.id !== id && !b.lock && (!state.order.includes(b.id) || state.statuses[b.id] === "skipped"))
+    const cands = D.BONUS.concat(D.PLAN).filter(b => b.id !== id && !b.lock && (!state.order.includes(b.id) || state.statuses[b.id] === "skipped") && (!HOPPING || parkOfId(b.id) === parkOfId(id)))
       .map(b => {
         const walk = (D.WALK[prevLand] && D.WALK[prevLand][b.land]) ?? 10;
         const gated = noOneTall(b);
@@ -558,7 +570,7 @@
     return `<div class="row ${row.done ? "done" : ""} ${opts.current ? "current" : ""}">
       <span class="t">${fmt(row.start)}${row.walk ? `<small>${row.walk} min walk</small>` : ""}</span>
       ${artTile(item, "thumb")}
-      <div><h3>${esc(item.title)}</h3><p class="sub">${kindTag(item)}<span>${esc(land.name)} · ${row.dur} min</span>${tags(row, item)}</p>${waitNote(row, item)}</div>
+      <div><h3>${esc(item.title)}</h3><p class="sub">${kindTag(item)}<span>${esc(HOPPING && item.ll === "book" ? "On your phone" : land.name)} · ${row.dur} min</span>${tags(row, item)}</p>${waitNote(row, item)}</div>
     </div>`;
   }
   function detail(row) {
@@ -637,7 +649,7 @@
       <label class="tog"><div><span>Show live wait times</span><small>On the day of your visit, shows how long each line is right now.</small></div><input type="checkbox" id="liveWaits" ${liveOn() ? "checked" : ""} onchange="A.liveWaits(this.checked)"></label>
       <p class="hint credit"><a href="https://themeparks.wiki" target="_blank" rel="noopener">Powered by ThemeParks.wiki</a></p>
       <h2 class="sec">Add a stop</h2>
-      ${pool.map(b => `<div class="pool"><span>${esc(b.title)}<small>${b.minInches ? b.minInches + '" · ' : ""}${b.dur} min</small></span><button class="btn sm" onclick="A.add('${aid(b.id)}')" ${noOneTall(b) ? "disabled title='nobody is tall enough'" : ""}>Add</button></div>`).join("") || "<p class='hint'>Everything is in the plan.</p>"}
+      ${pool.map(b => `<div class="pool"><span>${esc(b.title)}<small>${HOPPING ? esc(parkShort(b.id)) + " · " : ""}${b.minInches ? b.minInches + '" · ' : ""}${b.dur} min</small></span><button class="btn sm" onclick="A.add('${aid(b.id)}')" ${noOneTall(b) ? "disabled title='nobody is tall enough'" : ""}>Add</button></div>`).join("") || "<p class='hint'>Everything is in the plan.</p>"}
       <h2 class="sec">Share with your group</h2>
       ${share}
       ${local.shareMsg ? `<p class="hint">${esc(local.shareMsg)}</p>` : ""}
@@ -650,7 +662,7 @@
       <h2 class="sec">Testing</h2>
       <div class="pref"><span>Pretend it is</span><select onchange="A.setNow(this.value===''?null:+this.value)"><option value="">real time</option>${times.map(([v, l]) => `<option value="${v}" ${local.nowOverride == v ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       <p class="hint">Pretend time only changes this phone.</p>
-      <p class="hint">Heights, hours and Lightning Lane rules were checked on disneyland.com in October 2026 and change often. Showtimes and character times are only in the Disneyland app, so check there in the morning. This is a fan-made planner and is not affiliated with Disney.</p>`;
+      <p class="hint">Heights, hours and Lightning Lane rules were checked on disneyland.com (${(D.PARKS || ["disneyland"]).map(k => k === "dca" ? "California Adventure in November 2026" : "Disneyland Park in October 2026").join(", ")}) and change often. Showtimes and character times are only in the Disneyland app, so check there in the morning. This is a fan-made planner and is not affiliated with Disney.</p>`;
   }
 
   function renderSync() { const el = $("#sync"); if (el) el.textContent = local.syncStatus; }
@@ -936,7 +948,7 @@
   const start = () => {
     render();
     // Live waits: only on the day of the visit, and only while the switch in Settings is on. Redraw when new numbers arrive, unless someone is typing.
-    W.init({ enabled: () => liveOn() && isTheDay(), changed: () => { const a = document.activeElement; if (!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) render(); } });
+    W.init({ parks: D.PARKS || ["disneyland"], parkOf: parkOfId, enabled: () => liveOn() && isTheDay(), changed: () => { const a = document.activeElement; if (!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) render(); } });
     pull(); pullPos();
     if (SYNC_ON) { setInterval(pull, 5000); setInterval(pullPos, 10000); setInterval(pushPos, 10000); }
     // Skip the minute refresh while someone is typing, so a half-typed answer is not wiped.

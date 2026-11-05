@@ -16,7 +16,7 @@ window.DDIntro = (function () {
     var esc = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); };
     var dateTxt = ""; try { var p = D.DAY.split("-").map(Number); dateTxt = new Date(p[0], p[1] - 1, p[2]).toLocaleDateString("en-US", { month: "long", day: "numeric" }); } catch (e) { }
     var group = D.GROUP || "Your";
-    document.getElementById("ititle").innerHTML = esc(group) + " <em>day</em><small>Disneyland" + (dateTxt ? " · " + esc(dateTxt) : "") + "</small>";
+    document.getElementById("ititle").innerHTML = esc(group) + " <em>day</em><small>" + esc(D.SECOND ? "Disneyland Resort" : D.FIRST === "dca" ? "California Adventure" : "Disneyland") + (dateTxt ? " · " + esc(dateTxt) : "") + "</small>";
 
     /* stars */
     var st = document.getElementById("stars"), sh = "";

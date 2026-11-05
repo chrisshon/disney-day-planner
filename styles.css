@@ -385,6 +385,7 @@ body.setup { padding-bottom: 24px; }
 #setup .rm + .seg2 { margin-right: 34px; }
 #setup .tog { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; }
 #setup .grp { font-size: 12px; font-weight: 700; color: var(--gold); text-transform: uppercase; letter-spacing: .12em; margin: 8px 0 0; }
+#setup .grp.park { font-size: 15px; color: var(--ink); text-transform: none; letter-spacing: 0; margin: 20px 0 0; padding-top: 12px; border-top: 1px solid var(--line); }
 #setup .pick { display: grid; grid-template-columns: 44px 1fr auto; gap: 12px; align-items: center; width: 100%; text-align: left; padding: 10px 12px 10px 10px; border-radius: 16px; border: 1px solid var(--line); background: rgba(255,255,255,.04); color: var(--ink); font: inherit; }
 #setup .pick .thumb { width: 44px; height: 44px; border-radius: 12px; }
 #setup .pick .thumb i { font-size: 20px; }

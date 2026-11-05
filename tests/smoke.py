@@ -425,6 +425,145 @@ def main():
         check("No feed request on a day that is not the visit day", feed["calls"] == 0, str(feed["calls"]))
         ctx.close()
 
+        # 6. California Adventure and park hopping.
+        def park_page(profile, entries=None, visit_day=False):
+            ctx = browser.new_context(viewport={"width": 375, "height": 812})
+            wire(ctx)
+            feed = {"urls": []}
+
+            def handler(route):
+                feed["urls"].append(route.request.url)
+                route.fulfill(status=200, content_type="application/json", body=feed_body(entries or {}))
+
+            ctx.route(FEED_RE, handler)
+            page = ctx.new_page()
+            errs = watch(page)
+            page.add_init_script("localStorage.setItem('dd-profile',%s);localStorage.setItem('dd-intro',String(Date.now()));" % json.dumps(json.dumps(profile)))
+            if visit_day:
+                page.clock.install(time="2026-11-20T17:00:00Z")
+            page.goto(base)
+            page.wait_for_selector(".tabs button", timeout=15000)
+            until(page, "() => !!window.A")
+            page.evaluate("() => { try { document.querySelector('#intro, .intro')?.remove(); } catch (e) {} }")
+            return ctx, page, errs, feed
+
+        # Each Day tab row with its stop id, park and start time. Phone to-dos are left out: they happen wherever you stand.
+        PARK_ROWS = """() => { const byTitle = {}; DD.PLAN.concat(DD.BONUS).forEach(i => { byTitle[i.title] = i; });
+            return [...document.querySelectorAll('#view .list .rowwrap')].map(r => { const it = byTitle[r.querySelector('h3').textContent];
+              return { id: it.id, kind: it.kind, park: DD.parkOf(it.land), t: r.querySelector('.t').childNodes[0].textContent.trim(), walk: (r.querySelector('.t small') || {}).textContent || '' }; }); }"""
+        OLD_PLAN = ["gate", "ll1", "matterhorn", "smallworld", "carrousel", "dumbo", "royalhall", "lunch", "nap", "mickeyhouse", "runaway", "gadget", "castlewalk", "buzz", "autopia", "ll3", "ll2", "dinner", "lastlook", "exit"]  # PROFILE's plan before park hopping existed (commit c4ddad1)
+        HOP = dict(PROFILE, hop={"to": "dca", "at": 780}, mustDo=["matterhorn", "rsr"])
+        DCA = dict(PROFILE, park="dca", mustDo=["tsmm"])
+
+        ctx, page, errs, feed = park_page(PROFILE)
+        check("A plan saved before park hopping gives the same day as before", page.evaluate("DD.PLAN.map(x => x.id)") == OLD_PLAN, str(page.evaluate("DD.PLAN.map(x => x.id)")))
+        check("Saved answers without the hopping fields read as one park all day", page.evaluate("p => DD.SECOND === null && JSON.stringify(DDK.build(p).PLAN.map(x => x.id)) === JSON.stringify(DDK.build(Object.assign({}, p, {hop: {to: '', at: null}})).PLAN.map(x => x.id))", PROFILE))
+        bad = page.evaluate("""() => { const out = [];
+            const check = p => { try { DDK.checkProfile(p); return 'ok'; } catch (e) { return 'rejected'; } };
+            out.push(check(Object.assign({}, DD.PROFILE, {park: 'epcot'})), check(Object.assign({}, DD.PROFILE, {hop: {to: 'disneyland', at: null}})), check(Object.assign({}, DD.PROFILE, {hop: {to: 'dca', at: 'noon'}})));
+            return out; }""")
+        check("Saved answers naming an unknown park, a hop to the same park or a bad hop time are rejected", bad == ["rejected"] * 3, str(bad))
+        dca_items = page.evaluate("DDK.CATALOG.filter(c => DDK.parkOf(c.land) === 'dca').map(c => ({id: c.id, kind: c.kind, link: c.link || '', h: c.minInches || 0}))")
+        check("California Adventure has 26 or more rides, shows and meets, each linked to its disneyland.com page",
+              len([c for c in dca_items if c["kind"] != "break"]) >= 26 and all(c["link"].startswith("https://disneyland.disney.go.com/") and "disney-california-adventure" in c["link"] for c in dca_items), str(len(dca_items)))
+        ctx.close()
+
+        # A day hopping from Disneyland to California Adventure at about 1:00 pm.
+        ctx, page, errs, feed = park_page(HOP)
+        page.evaluate("A.tab('day')")
+        page.wait_for_timeout(300)
+        rows = page.evaluate(PARK_ROWS)
+        ids = [r["id"] for r in rows]
+        hop_i = ids.index("hop") if "hop" in ids else -1
+        walking = [r for r in rows if r["kind"] != "task"]
+        before = [r["park"] for r in walking[:walking.index(rows[hop_i])]] if hop_i >= 0 else []
+        after = [r["park"] for r in walking[walking.index(rows[hop_i]) + 1:]] if hop_i >= 0 else []
+        check("A hopping day has one hop", ids.count("hop") == 1, str(ids))
+        check("Every stop before the hop is in Disneyland and every stop after it is in California Adventure", before and after and set(before) == {"disneyland"} and set(after) == {"dca"}, f"{before} | {after}")
+        check("The hop happens near the chosen time (1:00 pm)", hop_i >= 0 and 12 * 60 + 30 <= minutes(rows[hop_i]["t"]) <= 14 * 60, rows[hop_i]["t"] if hop_i >= 0 else "none")
+        check("The hop counts the walk across the Esplanade", hop_i >= 0 and "walk" in rows[hop_i]["walk"] and int(rows[hop_i]["walk"].split()[0]) >= 10, rows[hop_i]["walk"] if hop_i >= 0 else "")
+        check("Both must-dos are in the plan, one in each park", {"matterhorn", "rsr"} <= set(ids))
+        check("The header names both parks and the map title says Disneyland Resort", "Disneyland and California Adventure" in page.locator("#eyebrow").text_content() and page.locator(".maptitle .eyebrow").text_content() == "Disneyland Resort")
+        added = page.evaluate("""() => { const pk = id => DD.parkOf(DD.BONUS.concat(DD.PLAN).find(i => i.id === id).land);
+            const a = DD.BONUS.find(b => pk(b.id) === 'dca' && !b.minInches), b = DD.BONUS.find(x => pk(x.id) === 'disneyland' && !x.minInches);
+            A.add(a.id); A.add(b.id); const st = JSON.parse(localStorage.getItem('dd-state')), h = st.order.indexOf('hop');
+            return { dca: st.order.indexOf(a.id) > h, dl: st.order.indexOf(b.id) < h }; }""")
+        check("Adding a stop puts it in its own park's part of the day", added == {"dca": True, "dl": True}, str(added))
+        page.evaluate("A.swapModal('rsr')")
+        page.wait_for_timeout(300)
+        swap_parks = page.evaluate("() => { const byTitle = {}; DD.PLAN.concat(DD.BONUS).forEach(i => { byTitle[i.title] = i; }); return [...new Set([...document.querySelectorAll('#modal .cand .ctitle')].map(e => DD.parkOf(byTitle[e.textContent].land)))]; }")
+        check("Swap only offers stops in the same park on a hopping day", swap_parks == ["dca"], str(swap_parks))
+        page.evaluate("A.closeModal()")
+        page.evaluate("A.tab('map')")
+        page.wait_for_timeout(1200)
+        pins = page.evaluate("() => ({ rsr: !!DD.GEO.rsr, matterhorn: !!DD.GEO.matterhorn, hop: !!DD.GEO.hop, markers: document.querySelectorAll('.leaflet-marker-icon.pinwrap').length })")
+        check("The map has pins in both parks and at the hop", pins["rsr"] and pins["matterhorn"] and pins["hop"] and pins["markers"] > 20, str(pins))
+        for tab in ("now", "family", "settings"):
+            page.evaluate("t => A.tab(t)", tab)
+            page.wait_for_timeout(200)
+        check("No console or page errors on a hopping day", not [e for e in errs if not (st2["cdn_offline"] and "cdnjs" in e)], "; ".join(errs[:3]))
+        ctx.close()
+
+        # Live waits on a hopping visit day: one feed per park, and California Adventure rides show their waits.
+        ctx, page, errs, feed = park_page(HOP, entries={"rsr": {"wait": 75}, "matterhorn": {"wait": 20}}, visit_day=True)
+        page.evaluate("A.tab('day')")
+        page.wait_for_timeout(600)
+        chips = page.evaluate("() => Object.fromEntries([...document.querySelectorAll('#view .list .rowwrap')].map(r => [r.querySelector('h3').textContent, [...r.querySelectorAll('.tag.wait')].map(x => x.textContent)]))")
+        urls = feed["urls"]
+        check("A hopping visit day asks each park's feed once", len(urls) == 2 and any("7340550b" in u for u in urls) and any("832fcd51" in u for u in urls), str(urls))
+        check("A California Adventure ride shows its live wait", chips.get("Radiator Springs Racers") == ["75 min wait"], str(chips.get("Radiator Springs Racers")))
+        check("A Disneyland ride still shows its live wait on a hopping day", chips.get("Matterhorn Bobsleds") == ["20 min wait"], str(chips.get("Matterhorn Bobsleds")))
+        ctx.close()
+
+        # A California Adventure day: nothing from Disneyland, and no Disneyland-only wording.
+        ctx, page, errs, feed = park_page(DCA)
+        page.evaluate("A.tab('day')")
+        page.wait_for_timeout(300)
+        lands = page.evaluate("[...new Set(DD.PLAN.concat(DD.BONUS).map(i => DD.parkOf(i.land)))]")
+        txt = ""
+        for tab in ("now", "day", "family", "settings"):
+            page.evaluate("t => A.tab(t)", tab)
+            page.wait_for_timeout(200)
+            txt += page.locator("#view").inner_text() + "\n"
+        txt += page.evaluate("DD.PLAN.map(i => i.title + ' ' + (i.note || '')).join(' ')")
+        wrong = [w for w in ("Disneyland Park", "Main Street", "City Hall", "Toontown", "Matterhorn", "Plaza Inn") if w in txt]
+        check("A California Adventure day only has California Adventure stops", lands == ["dca"], str(lands))
+        check("A California Adventure day never names Disneyland Park or its lands", not wrong and "Disney California Adventure Park" in page.locator("#eyebrow").text_content(), str(wrong))
+        page.evaluate("A.tab('map')")
+        page.wait_for_timeout(800)
+        check("No console or page errors on a California Adventure day", not [e for e in errs if not (st2["cdn_offline"] and "cdnjs" in e)], "; ".join(errs[:3]))
+        ctx.close()
+
+        # Setup: start in California Adventure, hop to Disneyland, let the planner choose when.
+        ctx = browser.new_context(viewport={"width": 375, "height": 812})
+        wire(ctx)
+        page = ctx.new_page()
+        errs = watch(page)
+        page.goto(base + "?setup")
+        page.wait_for_selector("[data-k=park]", timeout=15000)
+        page.select_option("[data-k=park]", "dca")
+        page.locator("[data-hop]").check()
+        page.wait_for_timeout(150)
+        check("Setup offers a time to switch parks, defaulting to the planner's choice", page.locator("[data-k='hop.at']").count() == 1 and page.input_value("[data-k='hop.at']") == "")
+        page.fill("[data-k=date]", "2027-03-15")
+        saw_parks = []
+        for _ in range(8):
+            if page.locator("[data-k='people.0.name']").count():
+                page.fill("[data-k='people.0.name']", "Ana")
+            saw_parks += page.locator("#setup .grp.park").all_inner_texts()
+            if page.locator("[data-nav=finish]").count():
+                page.locator("[data-nav=finish]").click()
+                break
+            page.locator("[data-nav=next]").click()
+            page.wait_for_timeout(120)
+        page.wait_for_selector(".tabs button", timeout=15000)
+        until(page, "() => !!window.DD")
+        check("The must-do list shows both parks on a hopping day", saw_parks == ["Disney California Adventure Park", "Disneyland Park"], str(saw_parks))
+        got = page.evaluate("({ first: DD.FIRST, second: DD.SECOND, hop: DD.PLAN.some(i => i.id === 'hop'), at: DD.HOP_AT })")
+        check("Setup saves a California Adventure start with a hop to Disneyland", got["first"] == "dca" and got["second"] == "disneyland" and got["hop"] and got["at"] is not None, str(got))
+        check("No console or page errors in the hopping setup", not [e for e in errs if not (st2["cdn_offline"] and "cdnjs" in e)], "; ".join(errs[:3]))
+        ctx.close()
+
         browser.close()
     srv.shutdown()
 

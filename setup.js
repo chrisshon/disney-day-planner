@@ -1,5 +1,5 @@
 /*
-  First-open setup. Five short screens: park and date, who is coming, naps and breaks, must-do rides, special occasion.
+  First-open setup. Five short screens: park, park hopping and date, who is coming, naps and breaks, must-do rides, special occasion.
   It never edits a code file. The answers become a "profile" saved on the device, and planner.js builds the day from it.
   Reopen it any time from Settings (Redo setup) or by adding ?setup to the address.
 */
@@ -7,7 +7,9 @@ window.DDSetup = (function () {
   const K = window.DDK; const T = K.T;
   const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const clone = o => JSON.parse(JSON.stringify(o));
-  const TOUR = ["ms", "hub", "ff", "fl", "tt", "tl", "al", "nos", "fr", "cc", "ge"];
+  const TOUR = { disneyland: ["ms", "hub", "ff", "fl", "tt", "tl", "al", "nos", "fr", "cc", "ge"], dca: K.PARKS.dca.tour }; // must-do list order, by land
+  const other = park => (park === "dca" ? "disneyland" : "dca");
+  const dayParks = () => [S.park].concat(S.hop && S.hop.to ? [S.hop.to] : []);
   let S, step = 0, err = "", root, opts, napTouched = false;
 
   const timeOpts = (from, to, by, cur) => { let h = ""; for (let m = from; m <= to; m += by) h += `<option value="${m}" ${m === cur ? "selected" : ""}>${K.fmtT(m)}</option>`; return h; };
@@ -22,9 +24,11 @@ window.DDSetup = (function () {
       lead: "A few quick questions build your day plan. It takes about two minutes and everything stays on this device.",
       html: () => `
         <label class="sfield">Park
-          <select data-k="park"><option value="disneyland" selected>Disneyland Park, Anaheim</option></select>
-          <small>Disneyland Park is the only park built in so far. The README shows how to ask Claude Code to add another.</small>
+          <select data-k="park" data-t="str" data-redraw="1">${Object.keys(K.PARKS).map(k => `<option value="${k}" ${S.park === k ? "selected" : ""}>${esc(K.PARKS[k].name)}</option>`).join("")}</select>
+          <small>${S.hop.to ? "The park you start in. Your park reservation is for this one." : "Both parks at the Disneyland Resort in Anaheim are built in."}</small>
         </label>
+        <label class="tog"><div><span>Park hop to ${esc(K.PARKS[other(S.park)].short)}</span><small>Needs a Park Hopper ticket. The plan walks you across the Esplanade and fills the rest of the day there.</small></div><input type="checkbox" data-hop="1" ${S.hop.to ? "checked" : ""}></label>
+        ${S.hop.to ? `<label class="sfield">Switch parks around<select data-k="hop.at" data-t="numOrNull"><option value="" ${S.hop.at == null ? "selected" : ""}>Let the planner choose</option>${timeOpts(T(10, 0), T(19, 0), 30, S.hop.at)}</select><small>The planner picks a time that splits the day fairly between the two parks.</small></label>` : ""}
         <label class="sfield">Date of your visit
           <input type="date" data-k="date" data-t="str" value="${esc(S.date)}" min="${todayStr()}">
         </label>
@@ -37,6 +41,7 @@ window.DDSetup = (function () {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(S.date || "")) return "Pick the date of your visit.";
         if (S.date < todayStr()) return "That date has already passed. Pick today or a later day.";
         if (S.leave - S.arrive < 240) return "Leave at least four hours between arriving and leaving.";
+        if (S.hop.to && S.hop.at != null && (S.hop.at < S.arrive + 60 || S.hop.at > S.leave - 60)) return "Pick a time to switch parks at least an hour after you arrive and an hour before you leave.";
       },
     },
     {
@@ -87,10 +92,12 @@ window.DDSetup = (function () {
       html: () => {
         const names = S.people.map(p => ({ n: p.name, h: heightOf(p), est: !!p.kid && !p.inches }));
         const KO = { ride: 0, meet: 1, show: 2, meal: 3, treat: 4 };
-        const items = K.CATALOG.filter(c => c.kind !== "break").sort((a, b) => (KO[a.kind] ?? 5) - (KO[b.kind] ?? 5));
-        const lands = TOUR.filter(l => items.some(i => i.land === l));
-        const sel = new Set(S.mustDo);
-        return `<p class="grp" style="margin-top:0">${sel.size} chosen</p>` + lands.map(l => `
+        const items = K.CATALOG.filter(c => c.kind !== "break" && dayParks().includes(K.parkOf(c.land))).sort((a, b) => (KO[a.kind] ?? 5) - (KO[b.kind] ?? 5));
+        const hopping = dayParks().length > 1;
+        const lands = [].concat(...dayParks().map(pk => TOUR[pk])).filter(l => items.some(i => i.land === l));
+        const sel = new Set(S.mustDo.filter(id => items.some(i => i.id === id)));
+        return `<p class="grp" style="margin-top:0">${sel.size} chosen</p>` + lands.map((l, n) => `
+          ${hopping && (n === 0 || K.parkOf(lands[n - 1]) !== K.parkOf(l)) ? `<p class="grp park">${esc(K.PARKS[K.parkOf(l)].name)}</p>` : ""}
           <p class="grp">${esc(K.LANDS[l].name)}</p>
           ${items.filter(i => i.land === l).map(i => {
             const short = i.minInches ? names.filter(x => x.h < i.minInches) : [];
@@ -105,7 +112,7 @@ window.DDSetup = (function () {
     },
     {
       eyebrow: "Step 5 of 5", title: "Celebrating <em>anything</em>",
-      lead: "Birthdays, anniversaries and first visits add a free City Hall button and a treat stop to the day.",
+      lead: () => `Birthdays, anniversaries and first visits add a free ${S.park === "dca" ? "Chamber of Commerce" : "City Hall"} button and a treat stop to the day.`,
       html: () => `
         <div class="chips" role="group" aria-label="Occasion">${[["none", "Nothing special"], ["birthday", "Birthday"], ["anniversary", "Anniversary"], ["first", "First visit"], ["other", "Something else"]].map(([v, l]) => `<button data-occ="${v}" class="${S.occasion.type === v ? "on" : ""}">${l}</button>`).join("")}</div>
         ${S.occasion.type === "birthday" ? `<label class="sfield">Whose birthday?<select data-k="occasion.forId" data-t="str"><option value="all" ${S.occasion.forId === "all" ? "selected" : ""}>Not sure / everyone</option>${S.people.map(p => `<option value="${p.id}" ${S.occasion.forId === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>` : ""}
@@ -118,7 +125,9 @@ window.DDSetup = (function () {
   function recap() {
     const d = S.date ? new Date(S.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }) : "your day";
     const kids = S.people.filter(p => p.kid).length, ad = S.people.length - kids;
-    return `<b>Disneyland Park</b>, ${esc(d)}<br>${ad} adult${ad === 1 ? "" : "s"}${kids ? ` and ${kids} child${kids === 1 ? "" : "ren"}` : ""}<br>In the gate about <b>${K.fmtT(S.arrive + 30)}</b>, out by <b>${K.fmtT(S.leave)}</b><br>${S.nap.on ? `Break around ${K.fmtT(S.nap.start)}` : "No nap or break"}, lunch ${K.fmtT(S.lunch)}, dinner ${K.fmtT(S.dinner)}<br>${S.mustDo.length} must-do ${S.mustDo.length === 1 ? "stop" : "stops"}${S.multiPass ? ", Lightning Lane Multi Pass" : ""}`;
+    const where = S.hop.to ? `${K.PARKS[S.park].short}, then ${K.PARKS[S.hop.to].short}` : K.PARKS[S.park].name;
+    const when = S.hop.to ? `<br>Switch parks ${S.hop.at == null ? "when the planner chooses" : "around " + K.fmtT(S.hop.at)}` : "";
+    return `<b>${esc(where)}</b>, ${esc(d)}${when}<br>${ad} adult${ad === 1 ? "" : "s"}${kids ? ` and ${kids} child${kids === 1 ? "" : "ren"}` : ""}<br>In the gate about <b>${K.fmtT(S.arrive + 30)}</b>, out by <b>${K.fmtT(S.leave)}</b><br>${S.nap.on ? `Break around ${K.fmtT(S.nap.start)}` : "No nap or break"}, lunch ${K.fmtT(S.lunch)}, dinner ${K.fmtT(S.dinner)}<br>${S.mustDo.length} must-do ${S.mustDo.length === 1 ? "stop" : "stops"}${S.multiPass ? ", Lightning Lane Multi Pass" : ""}`;
   }
 
   /* ---------- rendering ---------- */
@@ -126,7 +135,7 @@ window.DDSetup = (function () {
     const sc = SCREENS[step]; const last = step === SCREENS.length - 1;
     root.innerHTML = `
       <div class="dots">${SCREENS.map((_, i) => `<i class="${i <= step ? "on" : ""}"></i>`).join("")}</div>
-      <p class="eyebrow">${sc.eyebrow}</p><h1>${sc.title}</h1><p class="lead">${sc.lead}</p>
+      <p class="eyebrow">${sc.eyebrow}</p><h1>${sc.title}</h1><p class="lead">${typeof sc.lead === "function" ? sc.lead() : sc.lead}</p>
       <div class="body">${sc.html()}${err ? `<p class="err" role="alert">${esc(err)}</p>` : ""}</div>
       <div class="nav">
         ${step > 0 ? `<button class="btn" data-nav="back">Back</button>` : (opts.onCancel ? `<button class="btn" data-nav="cancel">Keep my plan</button>` : "")}
@@ -145,6 +154,7 @@ window.DDSetup = (function () {
         let v = el.type === "checkbox" ? el.checked : el.value;
         if (t === "num") v = +v; else if (t === "numOrNull") v = v === "" ? null : +v;
         setPath(path, v); err = "";
+        if (path === "park" && S.hop.to) S.hop.to = other(S.park); // hopping stays on, to the other park
         if (path === "nap.on") napTouched = true;
         if (el.getAttribute("data-redraw")) rerenderKeepScroll();
       });
@@ -162,6 +172,7 @@ window.DDSetup = (function () {
       if (i >= 0) S.mustDo.splice(i, 1); else S.mustDo.push(id);
       rerenderKeepScroll();
     }));
+    root.querySelectorAll("[data-hop]").forEach(b => b.addEventListener("change", () => { S.hop.to = b.checked ? other(S.park) : ""; err = ""; rerenderKeepScroll(); }));
     root.querySelectorAll("[data-occ]").forEach(b => b.addEventListener("click", () => { S.occasion.type = b.getAttribute("data-occ"); rerenderKeepScroll(); }));
     root.querySelectorAll("[data-nav]").forEach(b => b.addEventListener("click", () => {
       const a = b.getAttribute("data-nav");
@@ -176,7 +187,9 @@ window.DDSetup = (function () {
       // finish
       for (let i = 0; i < SCREENS.length - 1; i++) { const e2 = SCREENS[i].check(); if (e2) { step = i; err = e2; return render(); } }
       const profile = clone(S);
-      profile.mustDo = profile.mustDo.filter(id => K.CATALOG.some(c => c.id === id));
+      const parksToday = [profile.park].concat(profile.hop.to ? [profile.hop.to] : []);
+      profile.mustDo = profile.mustDo.filter(id => K.CATALOG.some(c => c.id === id && parksToday.includes(K.parkOf(c.land))));
+      if (!profile.hop.to) profile.hop.at = null;
       if (profile.occasion.type !== "birthday") profile.occasion.forId = "all";
       if (profile.occasion.type !== "other") profile.occasion.label = "";
       try { K.build(profile); } catch (ex) { err = String(ex.message || ex); return render(); }
@@ -187,6 +200,7 @@ window.DDSetup = (function () {
   function run(o) {
     opts = o; step = 0; err = ""; napTouched = !!o.initial;
     S = clone(Object.assign(K.defaultProfile(), o.initial || {}));
+    S.hop = Object.assign(K.defaultProfile().hop, S.hop || {}); // answers saved before park hopping existed
     if (!S.people.length) S.people = K.defaultProfile().people;
     root = document.getElementById("setup"); root.hidden = false;
     document.body.classList.add("setup");

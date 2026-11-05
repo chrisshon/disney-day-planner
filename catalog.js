@@ -1,35 +1,52 @@
 /*
-  Park catalog for Disneyland Park (Anaheim). Everything here is general: no family, no date.
-  The setup flow (setup.js) and the planner (planner.js) turn this into one day for one group.
+  Park catalog for the Disneyland Resort (Anaheim): Disneyland Park and Disney California Adventure Park.
+  Everything here is general: no family, no date. The setup flow (setup.js) and the planner (planner.js)
+  turn this into one day for one group, in one park or hopping from one park to the other.
 
-  Facts such as height rules and Lightning Lane Multi Pass eligibility were checked against
-  disneyland.com in October 2026. They change, so the app tells people to confirm in the official app.
-  Walkway and pin coordinates come from OpenStreetMap (c) OpenStreetMap contributors, ODbL.
+  Facts such as height rules and Lightning Lane Multi Pass eligibility were checked against disneyland.com:
+  Disneyland Park in October 2026, California Adventure on 2026-11-05. They change, so the app tells people
+  to confirm in the official app. Walkway and pin coordinates come from OpenStreetMap (c) OpenStreetMap
+  contributors, ODbL; California Adventure pins also use ThemeParks.wiki locations.
 */
 window.DDK = (function () {
   const T = (h, m = 0) => h * 60 + m;
 
   // Lands and walking minutes between neighbours.
   const LANDS = {
-    car: { name: "Car", color: "#4a5568" },
-    gate: { name: "Esplanade", color: "#4a5568" },
-    ms: { name: "Main Street", color: "#c53030" },
-    hub: { name: "Castle Hub", color: "#b7791f" },
-    fl: { name: "Fantasyland", color: "#6b46c1" },
-    ff: { name: "Fantasy Faire", color: "#b83280" },
-    tt: { name: "Toontown", color: "#dd6b20" },
-    tl: { name: "Tomorrowland", color: "#2b6cb0" },
-    al: { name: "Adventureland", color: "#2f855a" },
-    nos: { name: "New Orleans Sq", color: "#553c9a" },
-    fr: { name: "Frontierland", color: "#975a16" },
-    cc: { name: "Bayou Country", color: "#2f855a" },
-    ge: { name: "Galaxy's Edge", color: "#4a5568" },
+    car: { name: "Car", color: "#4a5568", park: "disneyland" },
+    gate: { name: "Esplanade", color: "#4a5568", park: "disneyland" },
+    ms: { name: "Main Street", color: "#c53030", park: "disneyland" },
+    hub: { name: "Castle Hub", color: "#b7791f", park: "disneyland" },
+    fl: { name: "Fantasyland", color: "#6b46c1", park: "disneyland" },
+    ff: { name: "Fantasy Faire", color: "#b83280", park: "disneyland" },
+    tt: { name: "Toontown", color: "#dd6b20", park: "disneyland" },
+    tl: { name: "Tomorrowland", color: "#2b6cb0", park: "disneyland" },
+    al: { name: "Adventureland", color: "#2f855a", park: "disneyland" },
+    nos: { name: "New Orleans Sq", color: "#553c9a", park: "disneyland" },
+    fr: { name: "Frontierland", color: "#975a16", park: "disneyland" },
+    cc: { name: "Bayou Country", color: "#2f855a", park: "disneyland" },
+    ge: { name: "Galaxy's Edge", color: "#4a5568", park: "disneyland" },
+    // Disney California Adventure Park
+    cgate: { name: "California Adventure gate", color: "#4a5568", park: "dca" },
+    bvs: { name: "Buena Vista Street", color: "#b7791f", park: "dca" },
+    hw: { name: "Hollywood Land", color: "#6b46c1", park: "dca" },
+    ac: { name: "Avengers Campus", color: "#c53030", park: "dca" },
+    cl: { name: "Cars Land", color: "#dd6b20", park: "dca" },
+    sfs: { name: "San Fransokyo Square", color: "#b83280", park: "dca" },
+    gp: { name: "Grizzly Peak", color: "#2f855a", park: "dca" },
+    pg: { name: "Paradise Gardens Park", color: "#2b6cb0", park: "dca" },
+    pp: { name: "Pixar Pier", color: "#2fa7b8", park: "dca" },
   };
   const EDGES = [
     ["car", "gate", 0], ["gate", "ms", 5], ["ms", "hub", 4], ["hub", "fl", 3], ["hub", "ff", 3], ["ff", "fl", 3],
     ["fl", "tt", 6], ["hub", "tl", 3], ["fl", "tl", 5], ["hub", "al", 3], ["al", "nos", 4], ["hub", "fr", 4],
     ["fr", "nos", 3], ["tt", "tl", 10], ["fl", "fr", 7], ["al", "fr", 3],
     ["nos", "cc", 3], ["fr", "cc", 4], ["cc", "ge", 4], ["fr", "ge", 6], ["fl", "ge", 8],
+    // California Adventure. Minutes come from the OpenStreetMap walkway distances between lands at a crowded-park pace.
+    ["cgate", "bvs", 3], ["bvs", "hw", 5], ["bvs", "gp", 6], ["bvs", "sfs", 6], ["bvs", "ac", 6], ["hw", "ac", 5], ["ac", "cl", 4],
+    ["cl", "sfs", 4], ["sfs", "gp", 7], ["sfs", "pg", 6], ["gp", "pg", 8], ["pg", "pp", 6], ["sfs", "pp", 7],
+    // The two gates face each other across the Esplanade (about 125 m). Security is before the Esplanade, so hopping is a walk plus a ticket scan.
+    ["gate", "cgate", 6],
   ];
   const WALK = {};
   Object.keys(LANDS).forEach(a => { WALK[a] = {}; Object.keys(LANDS).forEach(b => WALK[a][b] = a === b ? 0 : Infinity); });
@@ -42,6 +59,9 @@ window.DDK = (function () {
   const att = s => `${DL}/attractions/disneyland/${s}/`;
   const ent = s => `${DL}/entertainment/disneyland/${s}/`;
   const dine = s => `${DL}/dining/disneyland/${s}/`;
+  const catt = s => `${DL}/attractions/disney-california-adventure/${s}/`;
+  const cent = s => `${DL}/entertainment/disney-california-adventure/${s}/`;
+  const cdine = s => `${DL}/dining/disney-california-adventure/${s}/`;
 
   /*
     One entry per stop someone can add to the day.
@@ -158,6 +178,75 @@ window.DDK = (function () {
       note: "In the Opera House, seated and air-conditioned. Hours are limited, so check the app." },
     { id: "waltlife", kind: "show", title: "Walt Disney, A Magical Life", land: "ms", dur: 25, priority: 1, icon: "🎭", link: att("walt-disney-a-magical-life"),
       note: "In the Opera House, seated. Hours are limited, so check the app." },
+
+    /* ---------- Disney California Adventure Park (checked on disneyland.com 2026-11-05) ---------- */
+    // Buena Vista Street and Hollywood Land
+    { id: "dcapals", kind: "meet", title: "Meet Disney pals on Buena Vista Street", land: "bvs", dur: 25, priority: 3, icon: "🐭", link: cent("disney-pals-on-buena-vista-street"),
+      note: "Characters like Mickey, Minnie and Goofy greet guests on Buena Vista Street. Times vary, so check the Disneyland app." },
+    { id: "annaelsa", kind: "meet", title: "Anna and Elsa's Royal Welcome", land: "hw", dur: 40, priority: 4, icon: "❄️", link: cent("character-meet-anna-and-elsa-frozen"),
+      note: "Meet the sisters from Frozen face to face. Times vary, so check the Disneyland app." },
+    { id: "monsters", kind: "ride", title: "Monsters, Inc. Mike & Sulley to the Rescue!", land: "hw", dur: 30, priority: 4, icon: "👁️", ll: true, link: catt("monsters-inc"),
+      note: "Any height. Ride with Mike and Sulley through Monstropolis to get Boo back to her bedroom." },
+    { id: "philharmagic", kind: "show", title: "Mickey's PhilharMagic", land: "hw", dur: 25, priority: 3, icon: "🎺", link: catt("mickeys-philharmagic"),
+      note: "Any height. A 3D concert movie with many Disney characters, in the Sunset Showcase Theater." },
+    { id: "turtletalk", kind: "show", title: "Turtle Talk with Crush", land: "hw", dur: 25, priority: 3, icon: "🐢", link: catt("turtle-talk-with-crush"),
+      note: "Any height. Kids chat live with Crush the sea turtle from Finding Nemo and Finding Dory." },
+    { id: "animacademy", kind: "show", title: "Animation Academy", land: "hw", dur: 25, priority: 2, icon: "✏️", link: catt("animation-academy"),
+      note: "Any height. A hands-on drawing session with a Disney artist." },
+    { id: "sorcerer", kind: "show", title: "Sorcerer's Workshop", land: "hw", dur: 15, priority: 1, icon: "🪄", link: catt("sorcerers-workshop"),
+      note: "Any height. See how Disney animators bring characters to life." },
+
+    // Avengers Campus
+    { id: "webslingers", kind: "ride", title: "WEB SLINGERS: A Spider-Man Adventure", land: "ac", dur: 35, priority: 4, icon: "🕷️", ll: true, link: catt("web-slingers-spider-man-adventure"),
+      note: "Any height. Help Spider-Man round up runaway Spider-Bots." },
+    { id: "guardians", kind: "ride", title: "Guardians of the Galaxy: Mission BREAKOUT!", land: "ac", dur: 30, priority: 2, icon: "🚀", ll: true, minInches: 40, thrill: true, scary: true, link: catt("guardians-galaxy-mission-breakout"),
+      note: "40 inches. A ride with free-fall drops. Riders who are too short can use Rider Switch." },
+
+    // Cars Land
+    { id: "rsr", kind: "ride", title: "Radiator Springs Racers", land: "cl", dur: 60, priority: 3, icon: "🏁", minInches: 40, thrill: true, link: catt("radiator-springs-racers"),
+      note: "40 inches. A car race through the town from Cars. Not covered by Multi Pass (paid single pass, single rider line or standby). Riders who are too short can use Rider Switch." },
+    { id: "luigis", kind: "ride", title: "Luigi's Rollickin' Roadsters", land: "cl", dur: 20, priority: 3, icon: "🚙", minInches: 32, link: catt("luigis-rollickin-roadsters"),
+      note: "32 inches. Little cars spin around Luigi's lot to Italian tunes." },
+    { id: "mater", kind: "ride", title: "Mater's Junkyard Jamboree", land: "cl", dur: 20, priority: 3, icon: "🚜", minInches: 32, link: catt("maters-junkyard-jamboree"),
+      note: "32 inches. Little tractors spin you around the junkyard." },
+
+    // San Fransokyo Square and Grizzly Peak
+    { id: "bakery", kind: "show", title: "The Bakery Tour", land: "sfs", dur: 10, priority: 1, icon: "🥖", link: catt("bakery-tour"),
+      note: "Any height. A short walk through a real sourdough bakery." },
+    { id: "soarin", kind: "ride", title: "Soarin' Across America", land: "gp", dur: 35, priority: 3, icon: "🦅", ll: true, minInches: 40, link: catt("soarin-across-america"),
+      note: "40 inches. A simulated flight from coast to coast. Riders who are too short can use Rider Switch." },
+    { id: "grizzly", kind: "ride", title: "Grizzly River Run", land: "gp", dur: 30, priority: 2, icon: "🛶", ll: true, minInches: 42, thrill: true, link: catt("grizzly-river-run"),
+      note: "42 inches. A whitewater raft ride, and Disney warns you will get wet. Riders who are too short can use Rider Switch." },
+    { id: "redwood", kind: "break", title: "Redwood Creek Challenge Trail", land: "gp", dur: 30, priority: 1, icon: "🌲", link: catt("redwood-creek-challenge-trail"),
+      note: "Any height. An outdoor play area with rock walls and a ropes course. Check the app, because it is sometimes closed for refurbishment." },
+
+    // Paradise Gardens Park
+    { id: "mermaid", kind: "ride", title: "The Little Mermaid: Ariel's Undersea Adventure", land: "pg", dur: 20, priority: 3, icon: "🧜", ll: true, link: catt("little-mermaid-ariels-undersea-adventure"),
+      note: "Any height. A ride under the sea through the movie's songs." },
+    { id: "sillyswings", kind: "ride", title: "Silly Symphony Swings", land: "pg", dur: 20, priority: 2, icon: "🎻", minInches: 40, link: catt("silly-symphony-swings"),
+      note: "40 inches. Between 40 and 48 inches rides in a two-seat swing with a grown-up. 48 inches can ride alone." },
+    { id: "zephyr", kind: "ride", title: "Golden Zephyr", land: "pg", dur: 20, priority: 2, icon: "🛸", link: catt("golden-zephyr"),
+      note: "Any height. Silver rockets swing round and round." },
+    { id: "jellyfish", kind: "ride", title: "Jumpin' Jellyfish", land: "pg", dur: 20, priority: 2, icon: "🪼", minInches: 40, link: catt("jumpin-jellyfish"),
+      note: "40 inches. Jellyfish seats rise up and glide gently back down." },
+    { id: "goofysky", kind: "ride", title: "Goofy's Sky School", land: "pg", dur: 25, priority: 2, icon: "✈️", ll: true, minInches: 42, thrill: true, link: catt("goofys-sky-school"),
+      note: "42 inches. A small roller coaster. Riders who are too short can use Rider Switch." },
+
+    // Pixar Pier
+    { id: "tsmm", kind: "ride", title: "Toy Story Midway Mania!", land: "pp", dur: 30, priority: 4, icon: "🎯", ll: true, link: catt("toy-story-mania"),
+      note: "Any height. A 4D game where you ride and aim at moving targets." },
+    { id: "incredi", kind: "ride", title: "Incredicoaster", land: "pp", dur: 30, priority: 2, icon: "🎢", ll: true, minInches: 48, thrill: true, link: catt("incredicoaster"),
+      note: "48 inches. A high-speed roller coaster. Riders who are too short can use Rider Switch." },
+    { id: "jessie", kind: "ride", title: "Jessie's Critter Carousel", land: "pp", dur: 15, priority: 3, icon: "🐴", link: catt("jessies-critter-carousel"),
+      note: "Any height. A carousel with Jessie's animal pals from Toy Story. Quick." },
+    { id: "whirlwind", kind: "ride", title: "Inside Out Emotional Whirlwind", land: "pp", dur: 20, priority: 2, icon: "🌀", link: catt("emotional-whirlwind"),
+      note: "Any height. A spinning ride based on Inside Out." },
+    { id: "palaround", kind: "ride", title: "Pixar Pal-A-Round (fixed gondola)", land: "pp", dur: 25, priority: 2, icon: "🎡", link: catt("pixar-pal-a-round-non-swinging"),
+      note: "Any height. A Ferris wheel with views over the pier. The fixed gondolas are the gentle ones." },
+    { id: "palswing", kind: "ride", title: "Pixar Pal-A-Round (swinging gondola)", land: "pp", dur: 25, priority: 1, icon: "🎡", scary: true, link: catt("pixar-pal-a-round-swinging"),
+      note: "Any height. These gondolas swing and slide on the wheel. Pick a fixed gondola for a calmer ride." },
+    { id: "pixargames", kind: "break", title: "Games of Pixar Pier", land: "pp", dur: 15, priority: 1, icon: "🎪", link: catt("games-pixar-pier"),
+      note: "Midway game booths along the pier." },
   ];
 
   // Pin coordinates (lat, lon). From OpenStreetMap; a few placed by hand from the park map.
@@ -180,13 +269,39 @@ window.DDK = (function () {
     shootin: [33.8123, -117.9198], centoonial: [33.8150, -117.9187], duckpond: [33.81522, -117.91911], railroad: [33.8100, -117.9188],
     space: [33.81097, -117.9175], tiana: [33.81192, -117.92284], falcon: [33.81521, -117.92138], rise: [33.81439, -117.92272],
     matterhorn: [33.81307, -117.91785], indy: [33.8103, -117.92117],
+    // California Adventure: ThemeParks.wiki ride locations, and OpenStreetMap where several share one building.
+    dcapals: [33.80733, -117.91917], annaelsa: [33.80729, -117.91733], monsters: [33.80812, -117.91732], philharmagic: [33.80773, -117.91804],
+    turtletalk: [33.80756, -117.9175], animacademy: [33.80743, -117.9173], sorcerer: [33.80723, -117.91761],
+    webslingers: [33.80665, -117.91826], guardians: [33.80687, -117.91719], rsr: [33.80517, -117.91862], luigis: [33.80553, -117.91854], mater: [33.80624, -117.91925],
+    bakery: [33.80606, -117.91976], soarin: [33.80825, -117.92], grizzly: [33.80749, -117.92088], redwood: [33.80697, -117.92138],
+    mermaid: [33.80626, -117.92108], sillyswings: [33.80562, -117.9229], zephyr: [33.80603, -117.92227], jellyfish: [33.80614, -117.92253], goofysky: [33.80632, -117.92281],
+    tsmm: [33.80465, -117.92184], incredi: [33.80462, -117.9208], jessie: [33.80464, -117.92115], whirlwind: [33.80515, -117.92274],
+    palaround: [33.80503, -117.92238], palswing: [33.80496, -117.92228], pixargames: [33.80489, -117.92244],
   };
-  const LAND_GEO = { cc: [33.8121, -117.9226], ge: [33.8148, -117.9225], ms: [33.8107, -117.9190], hub: [33.8121, -117.9190], fl: [33.8139, -117.9186], ff: [33.8127, -117.9199], tt: [33.8156, -117.9189], tl: [33.8124, -117.9170], al: [33.8112, -117.9204], nos: [33.8109, -117.9214], fr: [33.8129, -117.9207] };
+  const LAND_GEO = { cc: [33.8121, -117.9226], ge: [33.8148, -117.9225], ms: [33.8107, -117.9190], hub: [33.8121, -117.9190], fl: [33.8139, -117.9186], ff: [33.8127, -117.9199], tt: [33.8156, -117.9189], tl: [33.8124, -117.9170], al: [33.8112, -117.9204], nos: [33.8109, -117.9214], fr: [33.8129, -117.9207],
+    bvs: [33.8079, -117.919], hw: [33.8077, -117.9172], ac: [33.8066, -117.918], cl: [33.8054, -117.9188], sfs: [33.8059, -117.92], gp: [33.8077, -117.9205], pg: [33.806, -117.9222], pp: [33.8049, -117.9218] };
+
+  /*
+    The two parks. gate: the land where you scan in. entry: the first land past the gate (for the early to-dos).
+    tour: the order the planner sweeps the lands in. live: the park's id on ThemeParks.wiki (waits.js).
+    geo: pins for the stops the planner adds itself (gate, meals, last look, celebration, Lightning Lane to-dos), per park.
+  */
+  const PARKS = {
+    disneyland: { name: "Disneyland Park", short: "Disneyland", gate: "gate", entry: "ms", live: "7340550b-c14d-4def-80bb-acdb51d49a66",
+      tour: ["ms", "hub", "ff", "fl", "tt", "tl", "al", "nos", "cc", "ge", "fr"],
+      geo: { gate: [33.8094, -117.9191], exit: [33.8092, -117.9189], hop: [33.8094, -117.9191], ll1: [33.8103, -117.9187], ll2: [33.8153, -117.9186], ll3: [33.8123, -117.9174],
+        occasion: [33.81023, -117.91947], lunch: [33.81554, -117.91874], dinner: [33.81159, -117.91833], lastlook: [33.8106, -117.919], treat: [33.81166, -117.91937] } },
+    dca: { name: "Disney California Adventure Park", short: "California Adventure", gate: "cgate", entry: "bvs", live: "832fcd51-ea19-4e77-85c7-75d5843b127c",
+      tour: ["bvs", "hw", "ac", "cl", "sfs", "pp", "pg", "gp"],
+      geo: { gate: [33.8087, -117.919], exit: [33.80865, -117.91905], hop: [33.8087, -117.919], ll1: [33.8081, -117.9189], ll2: [33.8077, -117.9205], ll3: [33.806, -117.9222],
+        occasion: [33.80835, -117.9192], lunch: [33.80557, -117.9192], dinner: [33.80806, -117.91969], lastlook: [33.8079, -117.91875], treat: [33.8081, -117.9186] } },
+  };
+  const parkOf = land => (LANDS[land] && LANDS[land].park) || "disneyland";
 
   // Typical height in inches by age, used only when a child's height is not entered.
   const HEIGHT_BY_AGE = [24, 30, 34, 37, 40, 43, 46, 48, 51, 53, 55, 58, 60, 62, 64, 65, 66, 67];
 
-  /* The date and minutes since midnight at the park (Anaheim), whatever timezone the phone is set to. */
+  /* The date and minutes since midnight at the resort (Anaheim, both parks), whatever timezone the phone is set to. */
   const PARK_TZ = "America/Los_Angeles";
   function parkNow(at) {
     const d = at || new Date();
@@ -200,5 +315,5 @@ window.DDK = (function () {
     }
   }
 
-  return { T, parkNow, LANDS, WALK, DL, att, ent, dine, CATALOG, GEO, LAND_GEO, HEIGHT_BY_AGE };
+  return { T, parkNow, LANDS, WALK, DL, att, ent, dine, catt, cent, cdine, CATALOG, GEO, LAND_GEO, HEIGHT_BY_AGE, PARKS, parkOf };
 })();

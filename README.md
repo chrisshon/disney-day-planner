@@ -1,8 +1,8 @@
 # Disney Day Planner
 
-A phone-sized web app that plans one day at Disneyland Park around your family.
+A phone-sized web app that plans one day at the Disneyland Resort around your family.
 
-It's built for Disneyland Park in Anaheim, California. It doesn't cover Disney California Adventure, Walt Disney World, Disneyland Paris or the other Disney parks.
+It covers both parks in Anaheim, California: Disneyland Park and Disney California Adventure Park. Plan a day in one park, or a Park Hopper day that starts in one and moves to the other. It doesn't cover Walt Disney World, Disneyland Paris or the other Disney parks yet.
 
 You answer five short questions. It builds a minute-by-minute plan with walking times, nap breaks, meals, height limits, a rider switch for kids who are too short, and a map of the route. During the day it re-plans when you run late, skip a ride, or swap one for another.
 
@@ -16,8 +16,9 @@ The people in the screenshots are a made-up family.
 
 ## What you get
 
-- A setup flow on first open: park and date, who is coming (names, kids' ages and heights), nap or break time, must-do rides, and any special occasion.
-- A plan built from those answers. A birthday adds a City Hall button stop and a treat stop.
+- A setup flow on first open: park, park hopping and date, who is coming (names, kids' ages and heights), nap or break time, must-do rides, and any special occasion.
+- A plan built from those answers. A birthday adds a celebration button stop and a treat stop.
+- Park hopping: turn it on in setup and the plan walks you across the Esplanade to the other park, at a time you pick or one the planner picks to split the day fairly. Rides you add later go into the part of the day spent in their own park.
 - Five tabs: **Now** (what to do next), **Day** (the whole plan), **Map** (the route and walking time), **Family** (who can ride what), and **Settings**.
 - Everything stays on your phone. There is no account and no server.
 - Optional: share the plan and live locations with the rest of your group (see below). This is off until you set it up.
@@ -87,7 +88,7 @@ Disney does not provide these numbers, so they can be wrong or late. Check the o
 - If you want no Disney requests at all, set `disneyMapTiles: false` in `config.js`.
 - There are no Disney photos or logos in this project. The pictures in the app are emoji and drawn shapes.
 
-Ride height limits and details in `catalog.js` are from general knowledge and change. Check the official Disneyland app before you go.
+Ride height limits and Lightning Lane Multi Pass rides in `catalog.js` were checked on disneyland.com (Disneyland Park in October 2026, California Adventure on November 5, 2026). They change, so check the official Disneyland app before you go.
 
 ## Where things live
 
@@ -95,7 +96,7 @@ Ride height limits and details in `catalog.js` are from general knowledge and ch
 |---|---|
 | `index.html`, `styles.css` | The page and its look |
 | `setup.js` | The five setup questions |
-| `catalog.js` | The park's rides, shows, food stops and walking times |
+| `catalog.js` | Both parks' rides, shows, food stops and walking times |
 | `planner.js` | Turns your answers plus the catalog into a plan |
 | `waits.js` | Fetches live ride waits on the day of the visit (ThemeParks.wiki) |
 | `app.js` | The schedule engine, the tabs, the map and group sharing |
