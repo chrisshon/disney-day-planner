@@ -38,6 +38,7 @@
   const parkOfId = id => (ITEMS[id] && D.parkOf ? D.parkOf(ITEMS[id].land) : D.FIRST);
   const placeName = item => (HOPPING && item.ll === "book" ? "On your phone" : D.LANDS[item.land].name); // a booking happens wherever you stand
   const parkShort = id => (D.PARK_INFO && D.PARK_INFO[parkOfId(id)] ? D.PARK_INFO[parkOfId(id)].short : "");
+  const otherParkName = id => { const o = parkOfId(id) === D.FIRST ? D.SECOND : D.FIRST; return D.PARK_INFO && D.PARK_INFO[o] ? D.PARK_INFO[o].short : ""; };
 
   /* Make saved or shared state safe to run: fill in missing settings, force numbers, and drop stops this version does not have. */
   function sane(s) {
@@ -307,13 +308,18 @@
     renderSync();
   }
 
+  const crossPark = (id, nid) => HOPPING && !!ITEMS[id] && !!ITEMS[nid] && parkOfId(id) !== parkOfId(nid);
   function applySwap(st, id, nid) {
     if (!nid || nid === id) return false;
     const i = st.order.indexOf(id); if (i < 0) return false;
     st.order = st.order.filter(x => x !== nid); delete st.statuses[nid];
-    const j = st.order.indexOf(id);
-    if (D.PLAN.find(p => p.id === id)) { st.statuses[id] = "skipped"; st.order.splice(j + 1, 0, nid); }
-    else { st.order.splice(j, 1, nid); delete st.statuses[id]; }
+    const planned = !!D.PLAN.find(p => p.id === id), j = st.order.indexOf(id);
+    if (planned) st.statuses[id] = "skipped"; else { st.order.splice(j, 1); delete st.statuses[id]; }
+    if (crossPark(id, nid)) {
+      // A stop from the other park goes at the end of that park's part of the day, so the planner never walks across for it.
+      const k = parkOfId(nid) === D.FIRST ? st.order.indexOf("hop") : st.order.indexOf("lastlook");
+      st.order.splice(k >= 0 ? k : st.order.length, 0, nid);
+    } else st.order.splice(planned ? j + 1 : j, 0, nid);
     return true;
   }
   function previewSwap(id, nid) {
@@ -342,7 +348,6 @@
     remove(id) { state.order = state.order.filter(x => x !== id); delete state.statuses[id]; commit(); },
     pin(id) { state.pinned[id] = !state.pinned[id]; commit(); },
     swap(id, nid) {
-      if (HOPPING && ITEMS[id] && ITEMS[nid] && parkOfId(id) !== parkOfId(nid)) return; // a swap stays in the same park
       if (!applySwap(state, id, nid)) return;
       commit();
     },
@@ -378,7 +383,8 @@
     tab(t) { local.tab = t; persistLocal(); render(); },
     toggleDone() { local.showDone = !local.showDone; persistLocal(); render(); },
     openRow(id) { local.openRow = local.openRow === id ? null : id; persistLocal(); render(); },
-    swapModal(id) { modal = { id, f: "best", all: false }; renderModal(); },
+    swapModal(id) { modal = { id, f: "best", all: false, other: false }; renderModal(); },
+    swapOther(o) { if (modal) { modal.other = !!o; renderModal(); } },
     swapFilter(f) { if (modal) { modal.f = f; renderModal(); } },
     swapAll() { if (modal) { modal.all = !modal.all; renderModal(); } },
     closeModal() { modal = null; renderModal(); },
@@ -495,9 +501,10 @@
     const rows = R.rows.filter(r => r.id !== "exit"), idx = rows.findIndex(r => r.id === id);
     const prev = idx > 0 ? rows[idx - 1] : null, prevLand = prev ? (ITEMS[prev.id].endLand || ITEMS[prev.id].land) : ITEMS[id].land;
     const exit0 = R.rows.find(r => r.id === "exit"), end0 = exit0 ? exit0.end : 0;
-    const cands = D.BONUS.concat(D.PLAN).filter(b => b.id !== id && !b.lock && (!state.order.includes(b.id) || state.statuses[b.id] === "skipped") && (!HOPPING || parkOfId(b.id) === parkOfId(id)))
+    const cands = D.BONUS.concat(D.PLAN).filter(b => b.id !== id && !b.lock && (!state.order.includes(b.id) || state.statuses[b.id] === "skipped") )
       .map(b => {
-        const walk = (D.WALK[prevLand] && D.WALK[prevLand][b.land]) ?? 10;
+        const cross = crossPark(id, b.id);
+        const walk = cross ? 0 : (D.WALK[prevLand] && D.WALK[prevLand][b.land]) ?? 10;
         const gated = noOneTall(b);
         let effect = "", cls = "none", delta2 = 0;
         if (gated) { effect = "No one is tall enough"; }
@@ -512,12 +519,12 @@
           else if (delta < -2) { effect = `Ends ${-delta} min earlier`; cls = "fit"; }
           else { effect = "Fits"; cls = "fit"; }
         }
-        return { b, walk, gated, effect, cls, later: delta2 };
+        return { b, walk, gated, effect, cls, later: delta2, cross };
       })
-      .sort((x, y) => x.walk - y.walk || effPriority(y.b) - effPriority(x.b));
+      .sort((x, y) => x.cross - y.cross || x.walk - y.walk || effPriority(y.b) - effPriority(x.b));
     return { cands, prev: prev ? ITEMS[prev.id] : null };
   }
-  const swapOptions = id => swapCandidates(id).cands.map(({ b, walk, gated, effect }) => `<option value="${aid(b.id)}" ${gated ? "disabled" : ""}>${esc(b.title)} · ${walk} min walk · ${b.dur} min · ${effect}</option>`).join("");
+  const swapOptions = id => swapCandidates(id).cands.filter(c => !c.cross).map(({ b, walk, gated, effect }) => `<option value="${aid(b.id)}" ${gated ? "disabled" : ""}>${esc(b.title)} · ${walk} min walk · ${b.dur} min · ${effect}</option>`).join("");
   let modal = null;
   function renderModal() {
     let host = $("#modal"); if (!host) { host = document.createElement("div"); host.id = "modal"; document.body.appendChild(host); }
@@ -526,6 +533,7 @@
     const item = ITEMS[modal.id]; const { cands, prev } = swapCandidates(modal.id);
     const f = modal.f || "best";
     const passes = c => {
+      if (c.cross !== !!modal.other) return false;
       if (modal.all && !D.ALL.every(p => canRide(p, c.b))) return false;
       if (f === "all") return true;
       if (f === "best") return !c.gated && (c.cls === "fit" || (c.cls === "late" && c.later <= 15));
@@ -538,11 +546,12 @@
     host.hidden = false; document.body.classList.add("modal-open"); host.dataset.key = key;
     host.innerHTML = `<div class="mbg" onclick="A.closeModal()"></div>
       <div class="msheet" role="dialog" aria-label="Swap ${esc(item.title)}">
-        <div class="mhead"><div><p class="eyebrow">Swap this stop</p><h2>${esc(item.title)}</h2><p class="sub">Closest first${prev ? `, walking from ${esc(shortTitle(prev.title))}` : ""}. The chip says what happens to the rest of the day.</p></div><button class="x" onclick="A.closeModal()" aria-label="Close">×</button></div>
+        <div class="mhead"><div><p class="eyebrow">Swap this stop</p><h2>${esc(item.title)}</h2><p class="sub">${modal.other ? `Moves to your time in ${esc(otherParkName(modal.id))}` : `Closest first${prev ? `, walking from ${esc(shortTitle(prev.title))}` : ""}`}. The chip says what happens to the rest of the day.</p></div><button class="x" onclick="A.closeModal()" aria-label="Close">×</button></div>
+        ${HOPPING ? `<div class="mfilters mparks">${[false, true].map(o => `<button class="fchip ${!!modal.other === o ? "on" : ""}" onclick="A.swapOther(${o})">In ${esc(o ? otherParkName(modal.id) : parkShort(modal.id))}</button>`).join("")}</div>` : ""}
         <div class="mfilters">${SWAP_FILTERS.map(([k, l]) => `<button class="fchip ${f === k ? "on" : ""}" onclick="A.swapFilter('${aid(k)}')">${l}</button>`).join("")}<button class="fchip ${modal.all ? "on" : ""}" onclick="A.swapAll()">Everyone can ride</button></div>
-        <div class="mlist">${shown.length ? shown.map(({ b, walk, gated, effect, cls }) => { return `<button class="cand ${cls}" ${gated ? "disabled" : ""} onclick="A.swapTo('${aid(modal.id)}','${aid(b.id)}')">
+        <div class="mlist">${shown.length ? shown.map(c0 => { const { b, walk, gated, effect, cls } = c0; return `<button class="cand ${cls}" ${gated ? "disabled" : ""} onclick="A.swapTo('${aid(modal.id)}','${aid(b.id)}')">
             ${artTile(b, "thumb")}
-            <span class="ctext"><span class="ctitle">${esc(b.title)}</span><span class="cmeta">${KIND[b.kind] || ""} · ${b.dur} min · ${walk ? `${walk} min walk` : "same land"}${b.minInches ? ` · ${b.minInches}"+` : ""}</span></span>
+            <span class="ctext"><span class="ctitle">${esc(b.title)}</span><span class="cmeta">${KIND[b.kind] || ""} · ${b.dur} min · ${c0.cross ? esc(parkShort(b.id)) : walk ? `${walk} min walk` : "same land"}${b.minInches ? ` · ${b.minInches}"+` : ""}</span></span>
             <span class="chip ${cls}">${esc(effect)}</span></button>`; }).join("") : `<p class="mempty">${f === "best" ? "Nothing fits cleanly right now. Tap All to see every option." : "Nothing in this group. Tap All."}</p>`}</div>
       </div>`;
     const newList = host.querySelector(".mlist"); if (newList && top) newList.scrollTop = top;
@@ -869,7 +878,9 @@
   function sheetGhost(R, item) {
     const land = D.LANDS[item.land];
     const gated = noOneTall(item);
-    const opts = R.rows.filter(r => !r.done && !ITEMS[r.id].lock && r.id !== item.id && (!HOPPING || parkOfId(r.id) === parkOfId(item.id))).map(r => `<option value="${aid(r.id)}">${fmt(r.start)} · ${esc(ITEMS[r.id].title)}</option>`).join("");
+    const rows = R.rows.filter(r => !r.done && !ITEMS[r.id].lock && r.id !== item.id), opt = r => `<option value="${aid(r.id)}">${fmt(r.start)} · ${esc(ITEMS[r.id].title)}</option>`;
+    const same = rows.filter(r => !crossPark(r.id, item.id)), other = rows.filter(r => crossPark(r.id, item.id));
+    const opts = same.map(opt).join("") + (other.length ? `<optgroup label="In ${esc(parkShort(other[0].id))}">${other.map(opt).join("")}</optgroup>` : "");
     return `<div class="sh"><button class="x" onclick="A.mapSel(null)" aria-label="Close">×</button>
       ${artTile(item, "thumb")}
       <div><p class="when">Not in the plan</p><h3>${esc(item.title)}</h3><p class="sub">${kindTag(item)}<span>${esc(land.name)} · ${item.dur} min</span>${waitChip(null, item)}${item.minInches ? `<span class="tag">${item.minInches}"+</span>` : ""}</p></div></div>

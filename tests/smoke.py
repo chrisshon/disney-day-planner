@@ -492,8 +492,18 @@ def main():
         page.evaluate("A.swapModal('rsr')")
         page.wait_for_timeout(300)
         swap_parks = page.evaluate("() => { const byTitle = {}; DD.PLAN.concat(DD.BONUS).forEach(i => { byTitle[i.title] = i; }); return [...new Set([...document.querySelectorAll('#modal .cand .ctitle')].map(e => DD.parkOf(byTitle[e.textContent].land)))]; }")
-        check("Swap only offers stops in the same park on a hopping day", swap_parks == ["dca"], str(swap_parks))
-        page.evaluate("A.closeModal()")
+        check("Swap offers stops in the same park first on a hopping day", swap_parks == ["dca"], str(swap_parks))
+        chip = page.locator("#modal .fchip", has_text="In Disneyland")
+        check("Swap has an optional filter for the other park", chip.count() == 1)
+        chip.click(); page.wait_for_timeout(300)
+        other = page.evaluate("() => { const byTitle = {}; DD.PLAN.concat(DD.BONUS).forEach(i => { byTitle[i.title] = i; }); const c = [...document.querySelectorAll('#modal .cand:not([disabled]) .ctitle')].map(e => byTitle[e.textContent]); return { parks: [...new Set(c.map(i => DD.parkOf(i.land)))], pick: ([...document.querySelectorAll('#modal .cand.fit .ctitle')].map(e => byTitle[e.textContent]).find(i => !DD.PLAN.some(p => p.id === i.id)) || {}).id }; }")
+        check("The other-park filter shows only the other park's stops", other["parks"] == ["disneyland"] and bool(other["pick"]), str(other))
+        page.evaluate(f"A.swapTo('rsr', '{other['pick']}')"); page.wait_for_timeout(300)
+        crossed = page.evaluate(f"""() => {{ const byTitle = {{}}; DD.PLAN.concat(DD.BONUS).forEach(i => {{ byTitle[i.title] = i; }}); A.tab('day');
+            const ids = [...document.querySelectorAll('#view .list .rowwrap h3')].map(h => (byTitle[h.textContent] || {{}}).id), st = JSON.parse(localStorage.getItem('dd-state'));
+            return {{ before: ids.indexOf('{other['pick']}') >= 0 && ids.indexOf('{other['pick']}') < ids.indexOf('hop'), skipped: st.statuses.rsr === 'skipped' }}; }}""")
+        check("A swap across parks moves the new stop into its own park's part of the day", crossed == {"before": True, "skipped": True}, str(crossed))
+        page.evaluate(f"A.undo('rsr'); A.remove('{other['pick']}')")
         moved = page.evaluate("""() => { A.llReturn('monsters', '9:30-10:30'); A.llReturn('smallworld', '4:00-5:00'); A.skip('hop');
             const byTitle = {}; DD.PLAN.concat(DD.BONUS).forEach(i => { byTitle[i.title] = i; }); A.tab('day');
             const ids = [...document.querySelectorAll('#view .list .rowwrap h3')].map(h => byTitle[h.textContent].id), h = ids.indexOf('hop');
@@ -506,8 +516,8 @@ def main():
         ghost = page.evaluate("""() => { const pk = id => DD.parkOf(DD.PLAN.concat(DD.BONUS).find(i => i.id === id).land);
             const order = JSON.parse(localStorage.getItem('dd-state')).order; const g = DD.BONUS.find(b => pk(b.id) === 'dca' && DD.GEO[b.id] && !order.includes(b.id)); A.tab('map'); A.mapSel(g.id); return g.id; }""")
         page.wait_for_timeout(600)
-        opts = page.evaluate("id => { const s = document.querySelector('#sheet select.swap'); return s ? [...s.options].slice(1).map(o => DD.parkOf(DD.PLAN.find(i => i.id === o.value).land)) : null; }", ghost)
-        check("The map's swap list only offers stops in the same park", opts is not None and set(opts) == {"dca"}, str(opts))
+        opts = page.evaluate("id => { const s = document.querySelector('#sheet select.swap'); return s ? [...s.options].slice(1).map(o => (o.parentElement.tagName === 'OPTGROUP' ? 'group:' : '') + DD.parkOf(DD.PLAN.find(i => i.id === o.value).land)) : null; }", ghost)
+        check("The map's swap list puts the same park first and the other park in its own group", opts is not None and set(opts) == {"dca", "group:disneyland"} and opts.index("group:disneyland") > max(i for i, x in enumerate(opts) if x == "dca"), str(opts))
         page.evaluate("A.mapSel(null)")
         page.evaluate("A.tab('map')")
         page.wait_for_timeout(1200)
