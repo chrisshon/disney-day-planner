@@ -35,11 +35,12 @@
       }
     });
     // park: where the day starts. hop.to: the second park, or "" for one park all day. hop.at: minutes from midnight, or null to let the planner choose.
-    if (p.park != null && !(typeof p.park === "string" && PARKS[p.park])) throw new Error("The saved answers name a park this planner does not have.");
+    const isPark = k => typeof k === "string" && Object.prototype.hasOwnProperty.call(PARKS, k); // not "constructor" or "__proto__"
+    if (p.park != null && !isPark(p.park)) throw new Error("The saved answers name a park this planner does not have.");
     if (p.hop != null) {
       if (typeof p.hop !== "object" || Array.isArray(p.hop)) throw new Error("The saved answers could not be read.");
       const to = p.hop.to;
-      if (to != null && to !== "" && !(typeof to === "string" && PARKS[to] && to !== (p.park || "disneyland"))) throw new Error("The saved answers hop to a park this planner does not have.");
+      if (to != null && to !== "" && !(isPark(to) && to !== (p.park || "disneyland"))) throw new Error("The saved answers hop to a park this planner does not have.");
       if (p.hop.at != null && !(typeof p.hop.at === "number" && isFinite(p.hop.at))) throw new Error("The saved answers could not be read.");
     }
   };
@@ -86,8 +87,9 @@
     if (!people.some(p => !p.kid)) throw new Error("At least one adult is needed.");
 
     /* ---- parks ---- */
-    const first = PARKS[P.park] ? P.park : "disneyland";
-    const second = P.hop.to && P.hop.to !== first && PARKS[P.hop.to] ? P.hop.to : null;
+    const own = k => typeof k === "string" && Object.prototype.hasOwnProperty.call(PARKS, k);
+    const first = own(P.park) ? P.park : "disneyland";
+    const second = P.hop.to && P.hop.to !== first && own(P.hop.to) ? P.hop.to : null;
     const dayParks = second ? [first, second] : [first];
     const last = second || first;
     const F1 = FIXED[first], FL = FIXED[last];
@@ -187,8 +189,11 @@
         const m1 = mins(first), m2 = mins(second), share = m1 + m2 ? m1 / (m1 + m2) : 0.5;
         const target = free(s1) * share; let x = s0; while (x < s1 && free(x) < target) x += 5;
         x = Math.round(x / 15) * 15;
-        blocks.forEach(([b0, b1]) => { if (x > b0 && x < b1) x = b1; }); // never in the middle of a meal or the nap
-        hopAt = Math.max(s0 + 60, Math.min(s1 - 60, x));
+        const lo = s0 + 60, hi = s1 - 60;
+        x = Math.max(lo, Math.min(hi, x));
+        // Never in the middle of a meal or the nap: move to the end of it, or to its start if the end is too late in the day.
+        for (let k = 0; k < 3; k++) blocks.forEach(([b0, b1]) => { if (x > b0 && x < b1) x = b1 <= hi ? b1 : Math.max(lo, b0); });
+        hopAt = x;
       }
     }
 
@@ -258,7 +263,7 @@
     ["lastlook", "exit"].forEach(k => { G[k] = pg(last)[k]; });
     if (hop) G.hop = pg(second).hop;
     const napItem = PLAN.find(p => p.id === "nap");
-    if (napItem) G.nap = LAND_GEO[napItem.land] || pg(parkOf(napItem.land)).gate;
+    if (napItem) G.nap = LAND_GEO[napItem.land] || LAND_GEO[parkOf(napItem.land) === "dca" ? "bvs" : "hub"]; // the gate has no land pin; Disneyland keeps its old fallback
     const LG = {}; Object.keys(LAND_GEO).forEach(k => { if (dayParks.includes(parkOf(k))) LG[k] = LAND_GEO[k]; });
 
     const LL_ORDER = PLAN.concat(BONUS).filter(i => i.ll === true).sort((a, b) => b.priority - a.priority).slice(0, 6).map(i => i.id);

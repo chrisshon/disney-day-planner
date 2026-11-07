@@ -36,6 +36,7 @@
   const ITEMS = Object.create(null); D.PLAN.concat(D.BONUS).forEach(i => ITEMS[i.id] = i); // no prototype, so an id like "constructor" in shared state is not a stop
   const HOPPING = !!D.SECOND;
   const parkOfId = id => (ITEMS[id] && D.parkOf ? D.parkOf(ITEMS[id].land) : D.FIRST);
+  const placeName = item => (HOPPING && item.ll === "book" ? "On your phone" : D.LANDS[item.land].name); // a booking happens wherever you stand
   const parkShort = id => (D.PARK_INFO && D.PARK_INFO[parkOfId(id)] ? D.PARK_INFO[parkOfId(id)].short : "");
 
   /* Make saved or shared state safe to run: fill in missing settings, force numbers, and drop stops this version does not have. */
@@ -91,6 +92,7 @@
     return p;
   }
 
+  let crossing = new Set();
   function compute() {
     const nowM = now();
     const order = state.order.filter(id => ITEMS[id]);
@@ -109,6 +111,9 @@
       dropped.add(cands[0].id);
     }
     result.dropped = [...dropped];
+    // On a hopping day, a stop in the other park's part of the day (a Lightning Lane return window can put one there) is flagged, since getting to it means walking across and back.
+    crossing = new Set();
+    if (HOPPING) { let pk = D.FIRST; result.rows.forEach(r => { if (r.id === "hop") { pk = D.SECOND; return; } if (ITEMS[r.id].ll !== "book" && ITEMS[r.id].kind !== "travel" && parkOfId(r.id) !== pk) crossing.add(r.id); }); }
     result.done = done;
     return result;
   }
@@ -132,7 +137,8 @@
     let base = ids.filter(id => !rides.includes(id) && !auto.includes(id));
     const insertAt = (id, at, overMeals) => {
       const r = run(base, nowM);
-      const row = r.rows.find(x => !x.done && x.id !== "exit" && (overMeals ? ITEMS[x.id].kind !== "travel" : !ITEMS[x.id].lock) && x.start >= at);
+      // Before the first stop that starts at or after the window. Rides may also go just before a meal (that never splits it); before 2026-11-06 they skipped meals, so a window between the last ride and dinner landed after dinner and was missed.
+      const row = r.rows.find(x => !x.done && x.id !== "exit" && (overMeals ? ITEMS[x.id].kind !== "travel" : ITEMS[x.id].kind !== "travel" && ITEMS[x.id].kind !== "task") && x.start >= at);
       const i = row ? base.indexOf(row.id) : base.indexOf("exit");
       base.splice(i < 0 ? base.length : i, 0, id);
     };
@@ -319,7 +325,7 @@
   const A = {
     done(id) { state.statuses[id] = "done"; state.doneAt[id] = now(); state.holdUntil = null; commit(); },
     undo(id) { delete state.statuses[id]; delete state.doneAt[id]; commit(); },
-    skip(id) { state.statuses[id] = "skipped"; commit(); },
+    skip(id) { if (ITEMS[id] && ITEMS[id].id === "hop") return; state.statuses[id] = "skipped"; commit(); }, // the hop holds the day together; to stay in one park, redo setup
     late(mins) { state.holdUntil = now() + mins; commit(); },
     clearHold() { state.holdUntil = null; commit(); },
     toggleWho(id, p) { const item = ITEMS[id]; let w = (state.who[id] || item.who).slice(); w = w.includes(p) ? w.filter(x => x !== p) : w.concat([p]); state.who[id] = w; commit(); },
@@ -336,6 +342,7 @@
     remove(id) { state.order = state.order.filter(x => x !== id); delete state.statuses[id]; commit(); },
     pin(id) { state.pinned[id] = !state.pinned[id]; commit(); },
     swap(id, nid) {
+      if (HOPPING && ITEMS[id] && ITEMS[nid] && parkOfId(id) !== parkOfId(nid)) return; // a swap stays in the same park
       if (!applySwap(state, id, nid)) return;
       commit();
     },
@@ -476,6 +483,7 @@
     t.push(waitChip(row, item));
     if (item.ll === true) t.push(`<span class="tag ll">Lightning Lane${state.llReturn[row.id] ? " " + esc(state.llReturn[row.id]) : ""}</span>`);
     else if (item.ll === "book") t.push(`<span class="tag ll">Book Lightning Lane</span>`);
+    if (row && crossing.has(row.id)) t.push(`<span class="tag">In ${esc(parkShort(row.id))}, walk across</span>`);
     if (needsSwitch(item)) t.push(`<span class="tag">Rider Switch</span>`);
     if (item.minInches) t.push(`<span class="tag">${item.minInches}"+</span>`);
     if (item.occasion) t.push(`<span class="tag bd">${esc(item.occasion)}</span>`);
@@ -545,7 +553,7 @@
   function actions(row, item) {
     return `<div class="actions">
       ${row.done ? `<button class="btn" onclick="A.undo('${aid(row.id)}')">Undo</button>` :
-        `<button class="btn primary" onclick="A.done('${aid(row.id)}')">Done</button><button class="btn" onclick="A.skip('${aid(row.id)}')">Skip</button>`}
+        `<button class="btn primary" onclick="A.done('${aid(row.id)}')">Done</button>${row.id === "hop" ? "" : `<button class="btn" onclick="A.skip('${aid(row.id)}')">Skip</button>`}`}
       ${item.ll === true && !row.done ? `<button class="btn" onclick="var v=prompt('Lightning Lane return window, e.g. 2:15-3:15');if(v!=null)A.llReturn('${aid(row.id)}',v)">Return time</button>` : ""}
       ${D.GEO[row.id] ? `<button class="btn quiet" onclick="A.findOnMap('${aid(row.id)}')">Map</button>` : ""}<a class="btn quiet" href="${item.link}" target="_blank" rel="noopener">Disney page</a>
       ${!item.lock && !row.done ? `<button class="btn quiet sm" onclick="A.move('${aid(row.id)}',-1)">Earlier</button><button class="btn quiet sm" onclick="A.move('${aid(row.id)}',1)">Later</button>${state.pinned[row.id] ? `<button class="btn quiet sm" onclick="A.pin('${aid(row.id)}')" title="Tap to let the planner drop this again">Kept ✓</button>` : ""}<button class="btn quiet sm" onclick="A.swapModal('${aid(row.id)}')">Swap</button>` : ""}
@@ -558,7 +566,7 @@
       <div class="photo art" style="--c:${land.color}"><i>${iconOf(item)}</i></div>
       <p class="when">Now · ${fmt(row.start)} to ${fmt(row.end)}</p>
       <h2>${esc(item.title)}</h2>
-      <p class="sub">${kindTag(item)}<span>${esc(land.name)} · ${row.dur} min${row.walk ? ` · ${row.walk} min walk` : ""}</span>${tags(row, item)}</p>
+      <p class="sub">${kindTag(item)}<span>${esc(placeName(item))} · ${row.dur} min${row.walk ? ` · ${row.walk} min walk` : ""}</span>${tags(row, item)}</p>
       ${waitNote(row, item)}
       <p class="note">${esc(item.note || "")}</p>
       ${whoChips(item, true)}
@@ -570,7 +578,7 @@
     return `<div class="row ${row.done ? "done" : ""} ${opts.current ? "current" : ""}">
       <span class="t">${fmt(row.start)}${row.walk ? `<small>${row.walk} min walk</small>` : ""}</span>
       ${artTile(item, "thumb")}
-      <div><h3>${esc(item.title)}</h3><p class="sub">${kindTag(item)}<span>${esc(HOPPING && item.ll === "book" ? "On your phone" : land.name)} · ${row.dur} min</span>${tags(row, item)}</p>${waitNote(row, item)}</div>
+      <div><h3>${esc(item.title)}</h3><p class="sub">${kindTag(item)}<span>${esc(placeName(item))} · ${row.dur} min</span>${tags(row, item)}</p>${waitNote(row, item)}</div>
     </div>`;
   }
   function detail(row) {
@@ -852,7 +860,7 @@
     const land = D.LANDS[item.land];
     return `<div class="sh"><button class="x" onclick="A.mapSel(null)" aria-label="Close">×</button>
       ${artTile(item, "thumb")}
-      <div><p class="when">${row.done ? "Done" : row.id === curId ? "Now" : fmt(row.start)}${row.walk ? ` · ${row.walk} min walk` : ""}</p><h3>${esc(item.title)}</h3><p class="sub">${kindTag(item)}<span>${esc(land.name)} · ${row.dur} min</span>${tags(row, item)}</p></div></div>
+      <div><p class="when">${row.done ? "Done" : row.id === curId ? "Now" : fmt(row.start)}${row.walk ? ` · ${row.walk} min walk` : ""}</p><h3>${esc(item.title)}</h3><p class="sub">${kindTag(item)}<span>${esc(placeName(item))} · ${row.dur} min</span>${tags(row, item)}</p></div></div>
       ${waitNote(row, item)}${waitCredit(waitChip(row, item))}
       <p class="note">${esc(item.note || "")}</p>
       ${whoChips(item, !row.done)}
@@ -861,7 +869,7 @@
   function sheetGhost(R, item) {
     const land = D.LANDS[item.land];
     const gated = noOneTall(item);
-    const opts = R.rows.filter(r => !r.done && !ITEMS[r.id].lock && r.id !== item.id).map(r => `<option value="${aid(r.id)}">${fmt(r.start)} · ${esc(ITEMS[r.id].title)}</option>`).join("");
+    const opts = R.rows.filter(r => !r.done && !ITEMS[r.id].lock && r.id !== item.id && (!HOPPING || parkOfId(r.id) === parkOfId(item.id))).map(r => `<option value="${aid(r.id)}">${fmt(r.start)} · ${esc(ITEMS[r.id].title)}</option>`).join("");
     return `<div class="sh"><button class="x" onclick="A.mapSel(null)" aria-label="Close">×</button>
       ${artTile(item, "thumb")}
       <div><p class="when">Not in the plan</p><h3>${esc(item.title)}</h3><p class="sub">${kindTag(item)}<span>${esc(land.name)} · ${item.dur} min</span>${waitChip(null, item)}${item.minInches ? `<span class="tag">${item.minInches}"+</span>` : ""}</p></div></div>

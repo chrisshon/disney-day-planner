@@ -10,6 +10,7 @@ window.DDSetup = (function () {
   const TOUR = { disneyland: ["ms", "hub", "ff", "fl", "tt", "tl", "al", "nos", "fr", "cc", "ge"], dca: K.PARKS.dca.tour }; // must-do list order, by land
   const other = park => (park === "dca" ? "disneyland" : "dca");
   const dayParks = () => [S.park].concat(S.hop && S.hop.to ? [S.hop.to] : []);
+  const mustToday = () => S.mustDo.filter(id => K.CATALOG.some(c => c.id === id && dayParks().includes(K.parkOf(c.land)))); // what will actually be saved
   let S, step = 0, err = "", root, opts, napTouched = false;
 
   const timeOpts = (from, to, by, cur) => { let h = ""; for (let m = from; m <= to; m += by) h += `<option value="${m}" ${m === cur ? "selected" : ""}>${K.fmtT(m)}</option>`; return h; };
@@ -127,7 +128,7 @@ window.DDSetup = (function () {
     const kids = S.people.filter(p => p.kid).length, ad = S.people.length - kids;
     const where = S.hop.to ? `${K.PARKS[S.park].short}, then ${K.PARKS[S.hop.to].short}` : K.PARKS[S.park].name;
     const when = S.hop.to ? `<br>Switch parks ${S.hop.at == null ? "when the planner chooses" : "around " + K.fmtT(S.hop.at)}` : "";
-    return `<b>${esc(where)}</b>, ${esc(d)}${when}<br>${ad} adult${ad === 1 ? "" : "s"}${kids ? ` and ${kids} child${kids === 1 ? "" : "ren"}` : ""}<br>In the gate about <b>${K.fmtT(S.arrive + 30)}</b>, out by <b>${K.fmtT(S.leave)}</b><br>${S.nap.on ? `Break around ${K.fmtT(S.nap.start)}` : "No nap or break"}, lunch ${K.fmtT(S.lunch)}, dinner ${K.fmtT(S.dinner)}<br>${S.mustDo.length} must-do ${S.mustDo.length === 1 ? "stop" : "stops"}${S.multiPass ? ", Lightning Lane Multi Pass" : ""}`;
+    return `<b>${esc(where)}</b>, ${esc(d)}${when}<br>${ad} adult${ad === 1 ? "" : "s"}${kids ? ` and ${kids} child${kids === 1 ? "" : "ren"}` : ""}<br>In the gate about <b>${K.fmtT(S.arrive + 30)}</b>, out by <b>${K.fmtT(S.leave)}</b><br>${S.nap.on ? `Break around ${K.fmtT(S.nap.start)}` : "No nap or break"}, lunch ${K.fmtT(S.lunch)}, dinner ${K.fmtT(S.dinner)}<br>${mustToday().length} must-do ${mustToday().length === 1 ? "stop" : "stops"}${S.multiPass ? ", Lightning Lane Multi Pass" : ""}`;
   }
 
   /* ---------- rendering ---------- */

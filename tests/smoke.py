@@ -460,9 +460,9 @@ def main():
         check("Saved answers without the hopping fields read as one park all day", page.evaluate("p => DD.SECOND === null && JSON.stringify(DDK.build(p).PLAN.map(x => x.id)) === JSON.stringify(DDK.build(Object.assign({}, p, {hop: {to: '', at: null}})).PLAN.map(x => x.id))", PROFILE))
         bad = page.evaluate("""() => { const out = [];
             const check = p => { try { DDK.checkProfile(p); return 'ok'; } catch (e) { return 'rejected'; } };
-            out.push(check(Object.assign({}, DD.PROFILE, {park: 'epcot'})), check(Object.assign({}, DD.PROFILE, {hop: {to: 'disneyland', at: null}})), check(Object.assign({}, DD.PROFILE, {hop: {to: 'dca', at: 'noon'}})));
+            out.push(check(Object.assign({}, DD.PROFILE, {park: 'epcot'})), check(Object.assign({}, DD.PROFILE, {hop: {to: 'disneyland', at: null}})), check(Object.assign({}, DD.PROFILE, {hop: {to: 'dca', at: 'noon'}})), check(Object.assign({}, DD.PROFILE, {park: 'constructor'})), check(Object.assign({}, DD.PROFILE, {hop: {to: '__proto__', at: null}})));
             return out; }""")
-        check("Saved answers naming an unknown park, a hop to the same park or a bad hop time are rejected", bad == ["rejected"] * 3, str(bad))
+        check("Saved answers naming an unknown park, a hop to the same park or a bad hop time are rejected", bad == ["rejected"] * 5, str(bad))
         dca_items = page.evaluate("DDK.CATALOG.filter(c => DDK.parkOf(c.land) === 'dca').map(c => ({id: c.id, kind: c.kind, link: c.link || '', h: c.minInches || 0}))")
         check("California Adventure has 26 or more rides, shows and meets, each linked to its disneyland.com page",
               len([c for c in dca_items if c["kind"] != "break"]) >= 26 and all(c["link"].startswith("https://disneyland.disney.go.com/") and "disney-california-adventure" in c["link"] for c in dca_items), str(len(dca_items)))
@@ -494,6 +494,21 @@ def main():
         swap_parks = page.evaluate("() => { const byTitle = {}; DD.PLAN.concat(DD.BONUS).forEach(i => { byTitle[i.title] = i; }); return [...new Set([...document.querySelectorAll('#modal .cand .ctitle')].map(e => DD.parkOf(byTitle[e.textContent].land)))]; }")
         check("Swap only offers stops in the same park on a hopping day", swap_parks == ["dca"], str(swap_parks))
         page.evaluate("A.closeModal()")
+        moved = page.evaluate("""() => { A.llReturn('monsters', '9:30-10:30'); A.llReturn('smallworld', '4:00-5:00'); A.skip('hop');
+            const byTitle = {}; DD.PLAN.concat(DD.BONUS).forEach(i => { byTitle[i.title] = i; }); A.tab('day');
+            const ids = [...document.querySelectorAll('#view .list .rowwrap h3')].map(h => byTitle[h.textContent].id), h = ids.indexOf('hop');
+            const st = JSON.parse(localStorage.getItem('dd-state'));
+            return { smallworld: ids.indexOf('smallworld') > h, hopKept: h >= 0 && st.statuses.hop !== 'skipped' }; }""")
+        check("A Disneyland return time after the hop is kept where the window puts it", moved["smallworld"], str(moved))
+        cross = page.evaluate("() => { const r = [...document.querySelectorAll('#view .list .rowwrap')].find(x => x.querySelector('h3').textContent.startsWith('Monsters')), s = [...document.querySelectorAll('#view .list .rowwrap')].find(x => x.querySelector('h3').textContent.includes('small world')); return r && s ? { tag: r.textContent.includes('walk across') && s.textContent.includes('In Disneyland, walk across'), t: r.querySelector('.t').childNodes[0].textContent.trim() } : null; }")
+        check("Return times in the other park are kept and flagged as a walk across, both ways", cross is not None and cross["tag"] and minutes(cross["t"]) < 11 * 60, str(cross))
+        check("The hop cannot be skipped", moved["hopKept"] and page.evaluate("A.openRow('hop'), !document.querySelector('.rowwrap.open .dx').textContent.includes('Skip')"), str(moved))
+        ghost = page.evaluate("""() => { const pk = id => DD.parkOf(DD.PLAN.concat(DD.BONUS).find(i => i.id === id).land);
+            const order = JSON.parse(localStorage.getItem('dd-state')).order; const g = DD.BONUS.find(b => pk(b.id) === 'dca' && DD.GEO[b.id] && !order.includes(b.id)); A.tab('map'); A.mapSel(g.id); return g.id; }""")
+        page.wait_for_timeout(600)
+        opts = page.evaluate("id => { const s = document.querySelector('#sheet select.swap'); return s ? [...s.options].slice(1).map(o => DD.parkOf(DD.PLAN.find(i => i.id === o.value).land)) : null; }", ghost)
+        check("The map's swap list only offers stops in the same park", opts is not None and set(opts) == {"dca"}, str(opts))
+        page.evaluate("A.mapSel(null)")
         page.evaluate("A.tab('map')")
         page.wait_for_timeout(1200)
         pins = page.evaluate("() => ({ rsr: !!DD.GEO.rsr, matterhorn: !!DD.GEO.matterhorn, hop: !!DD.GEO.hop, markers: document.querySelectorAll('.leaflet-marker-icon.pinwrap').length })")
